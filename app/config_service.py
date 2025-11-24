@@ -97,7 +97,24 @@ class ConfService:
         "org.iso.23220.photoID.1",
         "urn:eudi:pid:1",
         "urn:eu.europa.ec.eudi:pid:1",
-        "eu.europa.ec.av.1"
+        "eu.europa.ec.av.1",
+        "urn:eu.europa.ec.eudi:diploma:1:1",
+        "urn:eudi:ehic:1",
+        "eu.europa.ec.eudi.employee.1",
+        "urn:eu.europa.ec.eudi:hiid:1",
+        "urn:eu.europa.ec.eudi:iban:1",
+        "urn:eu.europa.ec.eudi:msisdn:1",
+        "urn:eu.europa.ec.eudi:pda1:1",
+        "urn:eu.europa.ec.eudi:por:1",
+        "eu.europa.ec.eudi.seafarer.1",
+        "urn:eu.europa.ec.eudi:tax:1"
+        "urn:eu.europa.ec.eudi:tax:1:1",
+        "key-attestation+jwt",
+
+        
+
+
+
     }
 
     # ------------------------------------------------------------------------------------------------
