@@ -17,6 +17,7 @@
 ###############################################################################
 import base64, cbor2, jwt
 from datetime import datetime, timedelta
+import time
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
@@ -38,18 +39,21 @@ def jwt_format(token_status_list: IssuerStatusList, country: str, list_url: str)
         str: The encoded JWT
     """
 
-    #private_key = ec.generate_private_key(ec.SECP256R1())
-
+    # private_key = ec.generate_private_key(ec.SECP256R1())
 
     with open(cfgservice.countries[country]["privKey"], "rb") as key_file:
         private_key = serialization.load_pem_private_key(
             key_file.read(),
-            password= cfgservice.countries[country]["privkey_passwd"] if cfgservice.countries[country]["privkey_passwd"] is not None else None,
-            backend=default_backend()
+            password=(
+                cfgservice.countries[country]["privkey_passwd"]
+                if cfgservice.countries[country]["privkey_passwd"] is not None
+                else None
+            ),
+            backend=default_backend(),
         )
 
-    #print("\ntoken_status_list: ", token_status_list, flush=True)
-    
+    # print("\ntoken_status_list: ", token_status_list, flush=True)
+
     with open(cfgservice.countries[country]["cert"], "rb") as file:
         certificate = file.read()
 
@@ -62,15 +66,15 @@ def jwt_format(token_status_list: IssuerStatusList, country: str, list_url: str)
     print("\ncert_b64", _cert_b64, flush=True)
 
     payload = {
-        #"iss": "https://dev.issuer.eudiw.dev",
+        # "iss": "https://dev.issuer.eudiw.dev",
         "sub": list_url,
-        "iat": datetime.now(),
-        "exp": datetime.now() + timedelta(days=1),
+        "iat": int(time.time()),
+        # "exp": datetime.now() + timedelta(days=1),
         "status_list": {
             "bits": 1,
-            "lst": base64.urlsafe_b64encode(
-                token_status_list.status_list.compressed()
-            ).decode("utf-8"),
+            "lst": base64.urlsafe_b64encode(token_status_list.status_list.compressed())
+            .decode("utf-8")
+            .rstrip("="),
         },
     }
 
@@ -81,7 +85,9 @@ def jwt_format(token_status_list: IssuerStatusList, country: str, list_url: str)
     return signed_jwt
 
 
-def cwt_format(token_status_list: IssuerStatusList, country: str, list_url: str) -> str:
+def cwt_format(
+    token_status_list: IssuerStatusList, country: str, list_url: str
+) -> bytes:
     """
     Issues a token status list in CWT format
 
@@ -91,13 +97,17 @@ def cwt_format(token_status_list: IssuerStatusList, country: str, list_url: str)
     Returns:
         str: The encoded CWT
     """
-    #private_key = ec.generate_private_key(ec.SECP256R1())
+    # private_key = ec.generate_private_key(ec.SECP256R1())
 
     with open(cfgservice.countries[country]["privKey"], "rb") as key_file:
         private_key = serialization.load_pem_private_key(
             key_file.read(),
-            password= cfgservice.countries[country]["privkey_passwd"] if cfgservice.countries[country]["privkey_passwd"] is not None else None,
-            backend=default_backend()
+            password=(
+                cfgservice.countries[country]["privkey_passwd"]
+                if cfgservice.countries[country]["privkey_passwd"] is not None
+                else None
+            ),
+            backend=default_backend(),
         )
 
     with open(cfgservice.countries[country]["cert"], "rb") as file:
@@ -106,19 +116,17 @@ def cwt_format(token_status_list: IssuerStatusList, country: str, list_url: str)
     cert = x509.load_der_x509_certificate(certificate)
 
     _cert = cert.public_bytes(getattr(serialization.Encoding, "DER"))
-    
+
     unprotected = {4: b"1"}
-    protected = {1: -7, 16: "statuslist+cwt", 33:_cert}
+    protected = {1: -7, 16: "application/statuslist+cwt", 33: _cert}
 
     claims = {
-        #1: "issuer_example",
+        # 1: "issuer_example",
         2: list_url,
-        6: int(datetime.now().timestamp()),
-        4: int((datetime.now() + timedelta(days=1)).timestamp()),
+        6: int(time.time()),
+        # 4: int((datetime.now() + timedelta(days=1)).timestamp()),
         65534: 3600,
-        65535: cbor2.dumps(
-            {"bits": 1, "lst": token_status_list.status_list.compressed()}
-        ),
+        65533: {"bits": 1, "lst": token_status_list.status_list.compressed()},
     }
 
     cbor_header = cbor2.dumps(protected)
@@ -137,4 +145,4 @@ def cwt_format(token_status_list: IssuerStatusList, country: str, list_url: str)
     except:
         print("CWT signature is invalid.") """
 
-    return cbor2.dumps(tagged).hex()
+    return cbor2.dumps(tagged)
