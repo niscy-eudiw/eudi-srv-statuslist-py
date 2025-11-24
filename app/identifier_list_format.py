@@ -28,7 +28,9 @@ from cryptography import x509
 from app.config_service import ConfService as cfgservice
 
 
-def identifier_list_jwt_format(identifier_list: dict, country: str, list_url: str) -> str:
+def identifier_list_jwt_format(
+    identifier_list: dict, country: str, list_url: str
+) -> str:
     """
     Issues an identifier list in jwt format
 
@@ -39,13 +41,17 @@ def identifier_list_jwt_format(identifier_list: dict, country: str, list_url: st
         str: The encoded JWT
     """
 
-    #private_key = ec.generate_private_key(ec.SECP256R1())
+    # private_key = ec.generate_private_key(ec.SECP256R1())
 
     with open(cfgservice.countries[country]["privKey"], "rb") as key_file:
         private_key = serialization.load_pem_private_key(
             key_file.read(),
-            password= cfgservice.countries[country]["privkey_passwd"] if cfgservice.countries[country]["privkey_passwd"] is not None else None,
-            backend=default_backend()
+            password=(
+                cfgservice.countries[country]["privkey_passwd"]
+                if cfgservice.countries[country]["privkey_passwd"] is not None
+                else None
+            ),
+            backend=default_backend(),
         )
 
     with open(cfgservice.countries[country]["cert"], "rb") as file:
@@ -63,18 +69,20 @@ def identifier_list_jwt_format(identifier_list: dict, country: str, list_url: st
         "iss": cfgservice.service_url[:-1],
         "sub": list_url,
         "iat": int(time.time()),
-        #"exp": datetime.now() + timedelta(days=1),
+        # "exp": datetime.now() + timedelta(days=1),
         "identifier_list": identifier_list,
     }
 
-    headers = {"typ": "identifierlist+jwt", "x5c": [_cert_b64]}
+    headers = {"typ": "application/identifierlist+jwt", "x5c": [_cert_b64]}
 
     signed_jwt = jwt.encode(payload, private_key, algorithm="ES256", headers=headers)
 
     return signed_jwt
 
 
-def identifier_list_cwt_format(identifier_list: dict, country: str, list_url: str) -> str:
+def identifier_list_cwt_format(
+    identifier_list: dict, country: str, list_url: str
+) -> bytes:
     """
     Issues an identifier list in cwt format
 
@@ -85,13 +93,17 @@ def identifier_list_cwt_format(identifier_list: dict, country: str, list_url: st
         str: The encoded CWT
     """
 
-    #private_key = ec.generate_private_key(ec.SECP256R1())
+    # private_key = ec.generate_private_key(ec.SECP256R1())
 
     with open(cfgservice.countries[country]["privKey"], "rb") as key_file:
         private_key = serialization.load_pem_private_key(
             key_file.read(),
-            password= cfgservice.countries[country]["privkey_passwd"] if cfgservice.countries[country]["privkey_passwd"] is not None else None,
-            backend=default_backend()
+            password=(
+                cfgservice.countries[country]["privkey_passwd"]
+                if cfgservice.countries[country]["privkey_passwd"] is not None
+                else None
+            ),
+            backend=default_backend(),
         )
 
     with open(cfgservice.countries[country]["cert"], "rb") as file:
@@ -102,14 +114,14 @@ def identifier_list_cwt_format(identifier_list: dict, country: str, list_url: st
     _cert = cert.public_bytes(getattr(serialization.Encoding, "DER"))
 
     unprotected = {4: b"1"}
-    protected = {1: -7, 16: "identifierlist+cwt", 33: _cert}
+    protected = {1: -7, 16: "application/identifierlist+cwt", 33: _cert}
 
     claims = {
         1: cfgservice.service_url[:-1],
         2: list_url,
         6: int(time.time()),
-        #4: int((datetime.now() + timedelta(days=1)).timestamp()),
-        65535: cbor2.dumps(identifier_list),
+        # 4: int((datetime.now() + timedelta(days=1)).timestamp()),
+        65533: identifier_list,
     }
 
     cbor_header = cbor2.dumps(protected)
@@ -128,4 +140,4 @@ def identifier_list_cwt_format(identifier_list: dict, country: str, list_url: st
     except:
         print("CWT signature is invalid.") """
 
-    return cbor2.dumps(tagged).hex()
+    return cbor2.dumps(tagged)

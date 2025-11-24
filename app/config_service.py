@@ -70,6 +70,11 @@ class ConfService:
             "privKey": "/etc/eudiw/age_verification/privKey/AgeVerificationDS-001.pem",
             "privkey_passwd": None,
             "cert": "/etc/eudiw/age_verification/cert/AgeVerificationDS-001_cert.der"
+        },
+        "AV2":{
+            "privKey": "/etc/eudiw/age_verification/privKey/bak/AgeVerificationDS-001.pem",
+            "privkey_passwd": None,
+            "cert": "/etc/eudiw/age_verification/cert/bak/AgeVerificationDS-001_cert.der"
         }
     }
 
@@ -92,7 +97,24 @@ class ConfService:
         "org.iso.23220.photoID.1",
         "urn:eudi:pid:1",
         "urn:eu.europa.ec.eudi:pid:1",
-        "eu.europa.ec.av.1"
+        "eu.europa.ec.av.1",
+        "urn:eu.europa.ec.eudi:diploma:1:1",
+        "urn:eudi:ehic:1",
+        "eu.europa.ec.eudi.employee.1",
+        "urn:eu.europa.ec.eudi:hiid:1",
+        "urn:eu.europa.ec.eudi:iban:1",
+        "urn:eu.europa.ec.eudi:msisdn:1",
+        "urn:eu.europa.ec.eudi:pda1:1",
+        "urn:eu.europa.ec.eudi:por:1",
+        "eu.europa.ec.eudi.seafarer.1",
+        "urn:eu.europa.ec.eudi:tax:1"
+        "urn:eu.europa.ec.eudi:tax:1:1",
+        "key-attestation+jwt",
+
+        
+
+
+
     }
 
     # ------------------------------------------------------------------------------------------------

@@ -29,10 +29,9 @@ from app.identifier_list_format import (
     identifier_list_jwt_format,
 )
 
-#current_dir = os.path.dirname(os.path.abspath(__file__))
-#sys.path.append(os.path.join(current_dir, '..', 'token-status-list-py'))
+# current_dir = os.path.dirname(os.path.abspath(__file__))
+# sys.path.append(os.path.join(current_dir, '..', 'token-status-list-py'))
 from token_status_list import IssuerStatusList
-
 
 
 def renew_lists():
@@ -52,19 +51,25 @@ def renew_lists():
 
                 try:
                     with open(file_path, "r") as json_file:
-                            temp_list = json.load(json_file)
+                        temp_list = json.load(json_file)
                 except Exception as e:
-                    cfgservice.app_logger.info(f"An error occurred while processing the file: {file_path}", exc_info=True)
+                    cfgservice.app_logger.info(
+                        f"An error occurred while processing the file: {file_path}",
+                        exc_info=True,
+                    )
                     continue
-                
-                if "status_list_uri" not in temp_list or "identifier_list_uri" not in temp_list:
+
+                if (
+                    "status_list_uri" not in temp_list
+                    or "identifier_list_uri" not in temp_list
+                ):
                     cfgservice.app_logger.info(f"Uris don't exist: {file_path}")
                     continue
 
                 expires_date = datetime.strptime(temp_list["expires"], "%Y-%m-%d")
 
                 if expires_date < datetime.now():
-                    cfgservice.app_logger.info(f'Removing {dir_path} as it is expired.')
+                    cfgservice.app_logger.info(f"Removing {dir_path} as it is expired.")
                     shutil.rmtree(dir_path)
                     continue
 
@@ -75,35 +80,61 @@ def renew_lists():
                 if "token_status_list" in dir_path:
                     list_type = "token_status_list"
 
-                    shutil.copy(dir_path + "/token_status_list.jwt",  copy_dir)
-                    shutil.copy(dir_path + "/token_status_list.cwt",  copy_dir)
-                    shutil.copy(dir_path + "/full_list.json",  copy_dir)
+                    shutil.copy(dir_path + "/token_status_list.jwt", copy_dir)
+                    shutil.copy(dir_path + "/token_status_list.cwt", copy_dir)
+                    shutil.copy(dir_path + "/full_list.json", copy_dir)
 
-                    temp_list["token_status_list"] = IssuerStatusList.load(temp_list["token_status_list"])
-                    #temp_list[list_type] = temp_list[list_type].dump()
+                    temp_list["token_status_list"] = IssuerStatusList.load(
+                        temp_list["token_status_list"]
+                    )
+                    # temp_list[list_type] = temp_list[list_type].dump()
 
                     jwt_file_path = os.path.join(dir_path, "token_status_list.jwt")
                     with open(jwt_file_path, "w") as f:
-                        f.write(jwt_format(temp_list["token_status_list"], temp_list["country"],temp_list["status_list_uri"]))
-                    
-                    cwt_file_path = os.path.join(dir_path,"token_status_list.cwt")
-                    with open(cwt_file_path, "w") as f:
-                        f.write(cwt_format(temp_list["token_status_list"], temp_list["country"],temp_list["status_list_uri"]))
+                        f.write(
+                            jwt_format(
+                                temp_list["token_status_list"],
+                                temp_list["country"],
+                                temp_list["status_list_uri"],
+                            )
+                        )
+
+                    cwt_file_path = os.path.join(dir_path, "token_status_list.cwt")
+                    with open(cwt_file_path, "wb") as f:
+                        f.write(
+                            cwt_format(
+                                temp_list["token_status_list"],
+                                temp_list["country"],
+                                temp_list["status_list_uri"],
+                            )
+                        )
 
                 elif "identifier_list" in dir_path:
                     list_type = "identifier_list"
 
-                    shutil.copy(dir_path + "/identifier_list.jwt",  copy_dir)
-                    shutil.copy(dir_path + "/identifier_list.cwt",  copy_dir)
-                    shutil.copy(dir_path + "/full_list.json",  copy_dir)
+                    shutil.copy(dir_path + "/identifier_list.jwt", copy_dir)
+                    shutil.copy(dir_path + "/identifier_list.cwt", copy_dir)
+                    shutil.copy(dir_path + "/full_list.json", copy_dir)
 
                     jwt_file_path = os.path.join(dir_path, "identifier_list.jwt")
                     with open(jwt_file_path, "w") as f:
-                        f.write(identifier_list_jwt_format(temp_list["identifier_list"], temp_list["country"],temp_list["identifier_list_uri"]))
+                        f.write(
+                            identifier_list_jwt_format(
+                                temp_list["identifier_list"],
+                                temp_list["country"],
+                                temp_list["identifier_list_uri"],
+                            )
+                        )
 
                     cwt_file_path = os.path.join(dir_path, "identifier_list.cwt")
-                    with open(cwt_file_path, "w") as f:
-                        f.write(identifier_list_cwt_format(temp_list["identifier_list"], temp_list["country"],temp_list["identifier_list_uri"]))
+                    with open(cwt_file_path, "wb") as f:
+                        f.write(
+                            identifier_list_cwt_format(
+                                temp_list["identifier_list"],
+                                temp_list["country"],
+                                temp_list["identifier_list_uri"],
+                            )
+                        )
 
 
 def daily_renewal():
@@ -113,27 +144,28 @@ def daily_renewal():
         if now.hour < 12:
             next_execution = now.replace(hour=12, minute=0, second=0, microsecond=0)
         else:
-            next_execution = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            next_execution = (now + timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
 
-        #next_execution = now + timedelta(minutes=1)
-        
+        # next_execution = now + timedelta(minutes=1)
+
         seconds_until_execution = (next_execution - now).total_seconds()
 
-        cfgservice.app_logger.info(f"Renewing in {int(seconds_until_execution // 3600):02}:{int((seconds_until_execution % 3600) // 60):02}:{round(seconds_until_execution % 60):02}")
+        cfgservice.app_logger.info(
+            f"Renewing in {int(seconds_until_execution // 3600):02}:{int((seconds_until_execution % 3600) // 60):02}:{round(seconds_until_execution % 60):02}"
+        )
 
         time.sleep(seconds_until_execution)
 
         cfgservice.app_logger.info("Renewing Revocation Lists")
 
-        
         try:
             renew_lists()
         except Exception as e:
             print(f"Error: {e}")
 
 
-
 def start_renewal_thread():
     task_thread = threading.Thread(target=daily_renewal, daemon=True)
     task_thread.start()
-

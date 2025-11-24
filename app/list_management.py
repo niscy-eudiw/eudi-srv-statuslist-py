@@ -26,8 +26,8 @@ from uuid import uuid4
 import cbor2
 from app.config_service import ConfService as cfgservice
 
-#current_dir = os.path.dirname(os.path.abspath(__file__))
-#sys.path.append(os.path.join(current_dir, '..', 'token-status-list-py'))
+# current_dir = os.path.dirname(os.path.abspath(__file__))
+# sys.path.append(os.path.join(current_dir, '..', 'token-status-list-py'))
 
 from token_status_list import IssuerStatusList, NoMoreIndices
 
@@ -42,18 +42,18 @@ status_list = {}
 identifier_list = {}
 
 
-def new_list(country: str,doctype: str):
+def new_list(country: str, doctype: str):
     """
     Initializes a new status list which inclues both the token status list and identifier status list, separated by country and doctype.
 
     Args:
-        country (str): country code 
+        country (str): country code
         doctype (str): doctype of the attestation
     """
 
     status_list.update(
         {
-            country:{
+            country: {
                 doctype: {
                     "token_status_list": IssuerStatusList.new(
                         1, cfgservice.token_status_list_size, "random"
@@ -69,16 +69,18 @@ def new_list(country: str,doctype: str):
 
 def dump_list(specific_status_list, country, doctype):
     """
-    Dumps the status lists to disk. 
+    Dumps the status lists to disk.
 
     Args:
         specific_status_list (dict): status list to dump
-        country (str): country code 
+        country (str): country code
         doctype (str): doctype of the attestation
     """
 
     rand = specific_status_list["rand"]
-    directory = f"{cfgservice.status_list_dir}/token_status_list/{country}/{doctype}/{rand}"
+    directory = (
+        f"{cfgservice.status_list_dir}/token_status_list/{country}/{doctype}/{rand}"
+    )
     os.makedirs(directory, exist_ok=True)
 
     json_file_path = os.path.join(directory, "full_list.json")
@@ -93,13 +95,25 @@ def dump_list(specific_status_list, country, doctype):
 
     jwt_file_path = os.path.join(directory, "token_status_list.jwt")
     with open(jwt_file_path, "w") as f:
-        f.write(jwt_format(specific_status_list["token_status_list"], country, cfgservice.service_url
-            + f"token_status_list/{country}/{doctype}/{rand}"))
+        f.write(
+            jwt_format(
+                specific_status_list["token_status_list"],
+                country,
+                cfgservice.service_url
+                + f"token_status_list/{country}/{doctype}/{rand}",
+            )
+        )
 
     cwt_file_path = os.path.join(directory, "token_status_list.cwt")
-    with open(cwt_file_path, "w") as f:
-        f.write(cwt_format(specific_status_list["token_status_list"], country, cfgservice.service_url
-            + f"token_status_list/{country}/{doctype}/{rand}" ))
+    with open(cwt_file_path, "wb") as f:
+        f.write(
+            cwt_format(
+                specific_status_list["token_status_list"],
+                country,
+                cfgservice.service_url
+                + f"token_status_list/{country}/{doctype}/{rand}",
+            )
+        )
 
     specific_status_list.update(
         {
@@ -108,7 +122,9 @@ def dump_list(specific_status_list, country, doctype):
         }
     )
     ##
-    identifier_list_directory = f"{cfgservice.status_list_dir}/identifier_list/{country}/{doctype}/{rand}"
+    identifier_list_directory = (
+        f"{cfgservice.status_list_dir}/identifier_list/{country}/{doctype}/{rand}"
+    )
 
     os.makedirs(identifier_list_directory, exist_ok=True)
 
@@ -118,13 +134,23 @@ def dump_list(specific_status_list, country, doctype):
 
     jwt_file_path = os.path.join(identifier_list_directory, "identifier_list.jwt")
     with open(jwt_file_path, "w") as f:
-        f.write(identifier_list_jwt_format(specific_status_list["identifier_list"], country, cfgservice.service_url
-            + f"identifier_list/{country}/{doctype}/{rand}"))
+        f.write(
+            identifier_list_jwt_format(
+                specific_status_list["identifier_list"],
+                country,
+                cfgservice.service_url + f"identifier_list/{country}/{doctype}/{rand}",
+            )
+        )
 
     cwt_file_path = os.path.join(identifier_list_directory, "identifier_list.cwt")
-    with open(cwt_file_path, "w") as f:
-        f.write(identifier_list_cwt_format(specific_status_list["identifier_list"], country, cfgservice.service_url
-            + f"identifier_list/{country}/{doctype}/{rand}"))
+    with open(cwt_file_path, "wb") as f:
+        f.write(
+            identifier_list_cwt_format(
+                specific_status_list["identifier_list"],
+                country,
+                cfgservice.service_url + f"identifier_list/{country}/{doctype}/{rand}",
+            )
+        )
 
     specific_status_list.update(
         {
@@ -140,7 +166,7 @@ def load_list(uri):
 
     Args:
         uri (str): uri pointing to the status list to load
-    
+
     Returns:
         dict: The loaded list
     """
@@ -160,15 +186,15 @@ def load_list(uri):
     return temp_list
 
 
-def take_index_list(country,doctype, expiry_date):
+def take_index_list(country, doctype, expiry_date):
     """
     Takes a new index/id from list
 
     Args:
-        country (str): country code 
+        country (str): country code
         doctype (str): doctype of the attestation
         expiry_date (str): expiry date of the attestation
-    
+
     Returns:
         str: The index/id
     """
@@ -176,8 +202,8 @@ def take_index_list(country,doctype, expiry_date):
     global status_list
 
     if country not in status_list:
-        status_list.update({country:{}})
-    
+        status_list.update({country: {}})
+
     if doctype not in status_list[country]:
         status_list[country].update(
             {
@@ -198,12 +224,18 @@ def take_index_list(country,doctype, expiry_date):
         if status_list[country][doctype]["expires"] is None:
             status_list[country][doctype]["expires"] = expiry_date
         else:
-            new_exp = datetime.strptime(expiry_date, '%Y-%m-%d')
-            current_exp = datetime.strptime(status_list[country][doctype]["expires"], '%Y-%m-%d')
+            new_exp = datetime.strptime(expiry_date, "%Y-%m-%d")
+            current_exp = datetime.strptime(
+                status_list[country][doctype]["expires"], "%Y-%m-%d"
+            )
             if new_exp > current_exp:
                 status_list[country][doctype]["expires"] = expiry_date
-        
-        print("\nStatus List Expiry Changed to: ", status_list[country][doctype]["expires"], flush=True)
+
+        print(
+            "\nStatus List Expiry Changed to: ",
+            status_list[country][doctype]["expires"],
+            flush=True,
+        )
 
         dump_list(status_list[country][doctype], country, doctype)
     except NoMoreIndices as e:
@@ -218,12 +250,12 @@ def take_index_list(country,doctype, expiry_date):
     return index
 
 
-def generate_StatusListInfo(country,doctype, expiry_date):
+def generate_StatusListInfo(country, doctype, expiry_date):
     """
     Generates the structure sent to the issuer
 
     Args:
-        country (str): country code 
+        country (str): country code
         doctype (str): doctype of the attestation
         expiry_date (str): expiry date of the attestation
 
@@ -231,11 +263,10 @@ def generate_StatusListInfo(country,doctype, expiry_date):
         dict: structure to pass to the issuer
     """
 
-    index = take_index_list(country,doctype, expiry_date)
+    index = take_index_list(country, doctype, expiry_date)
 
     status_list_uri = status_list[country][doctype]["status_list_uri"]
     identifier_list_uri = status_list[country][doctype]["identifier_list_uri"]
-
 
     StatusListInfo = {
         "status_list": {
@@ -250,13 +281,18 @@ def generate_StatusListInfo(country,doctype, expiry_date):
 
     return StatusListInfo
 
-#in case where status list is still the same
-def update_status_list(country,doctype,id, index):
+
+# in case where status list is still the same
+def update_status_list(country, doctype, id, index):
     print("\nRevoking country: ", country)
     print("\nRevoking doctype: ", doctype)
     print("\nRevoking ID: ", id)
 
-    if country in status_list and doctype in status_list[country] and status_list[country][doctype]["rand"] == id:
+    if (
+        country in status_list
+        and doctype in status_list[country]
+        and status_list[country][doctype]["rand"] == id
+    ):
         status_list[country][doctype]["token_status_list"].status_list.set(index, 1)
 
         if "identifier_list" in status_list[country][doctype]:
