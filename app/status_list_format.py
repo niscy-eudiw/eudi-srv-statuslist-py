@@ -78,7 +78,7 @@ def jwt_format(token_status_list: IssuerStatusList, country: str, list_url: str)
         },
     }
 
-    headers = {"typ": "application/statuslist+jwt", "x5c": [_cert_b64]}
+    headers = {"typ": "statuslist+jwt", "x5c": [_cert_b64]}
 
     signed_jwt = jwt.encode(payload, private_key, algorithm="ES256", headers=headers)
 
