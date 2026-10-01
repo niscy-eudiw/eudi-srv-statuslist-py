@@ -140,6 +140,6 @@ def identifier_list_cwt_format(
     """ try:
         private_key.public_key().verify(signature, message, ec.ECDSA(hashes.SHA256()))
         print("CWT signature is valid.")
-    except:
+    except: """
 
     return cbor2.dumps(tagged)
