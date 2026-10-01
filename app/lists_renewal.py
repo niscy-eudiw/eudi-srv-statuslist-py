@@ -116,7 +116,7 @@ def renew_lists():
                     shutil.copy(dir_path + "/identifier_list.cwt", copy_dir)
                     shutil.copy(dir_path + "/full_list.json", copy_dir)
 
-                    jwt_file_path = os.path.join(dir_path, "identifier_list.jwt")
+                    """ jwt_file_path = os.path.join(dir_path, "identifier_list.jwt")
                     with open(jwt_file_path, "w") as f:
                         f.write(
                             identifier_list_jwt_format(
@@ -124,7 +124,7 @@ def renew_lists():
                                 temp_list["country"],
                                 temp_list["identifier_list_uri"],
                             )
-                        )
+                        ) """
 
                     cwt_file_path = os.path.join(dir_path, "identifier_list.cwt")
                     with open(cwt_file_path, "wb") as f:

@@ -39,7 +39,7 @@ from app.identifier_list_format import (
 
 status_list = {}
 
-identifier_list = {}
+identifier_list = {"identifiers": {}}
 
 
 def new_list(country: str, doctype: str):
@@ -66,6 +66,11 @@ def new_list(country: str, doctype: str):
         }
     )
 
+def _stringify_keys(d):
+    return {
+        (k.decode() if isinstance(k, bytes) else str(k)): v
+        for k, v in d.items()
+    }
 
 def dump_list(specific_status_list, country, doctype):
     """
@@ -87,6 +92,9 @@ def dump_list(specific_status_list, country, doctype):
 
     dict_copy = copy.deepcopy(specific_status_list)
     dict_copy["token_status_list"] = dict_copy["token_status_list"].dump()
+    dict_copy["identifier_list"]["identifiers"] = _stringify_keys(
+            dict_copy["identifier_list"]["identifiers"]
+        )
     dict_copy["country"] = country
     dict_copy["doctype"] = doctype
 
@@ -132,7 +140,7 @@ def dump_list(specific_status_list, country, doctype):
     with open(json_file_path, "w") as f:
         f.write(json.dumps(dict_copy))
 
-    jwt_file_path = os.path.join(identifier_list_directory, "identifier_list.jwt")
+    """ jwt_file_path = os.path.join(identifier_list_directory, "identifier_list.jwt")
     with open(jwt_file_path, "w") as f:
         f.write(
             identifier_list_jwt_format(
@@ -140,7 +148,7 @@ def dump_list(specific_status_list, country, doctype):
                 country,
                 cfgservice.service_url + f"identifier_list/{country}/{doctype}/{rand}",
             )
-        )
+        ) """
 
     cwt_file_path = os.path.join(identifier_list_directory, "identifier_list.cwt")
     with open(cwt_file_path, "wb") as f:
@@ -211,7 +219,7 @@ def take_index_list(country, doctype, expiry_date):
                     "token_status_list": IssuerStatusList.new(
                         1, cfgservice.token_status_list_size, "random"
                     ),
-                    "identifier_list": {},
+                    "identifier_list": {"identifiers": {}},
                     "expires": expiry_date,
                     "rand": str(uuid4()),
                 }
@@ -236,6 +244,7 @@ def take_index_list(country, doctype, expiry_date):
             status_list[country][doctype]["expires"],
             flush=True,
         )
+
 
         dump_list(status_list[country][doctype], country, doctype)
     except NoMoreIndices as e:
@@ -296,4 +305,4 @@ def update_status_list(country, doctype, id, index):
         status_list[country][doctype]["token_status_list"].status_list.set(index, 1)
 
         if "identifier_list" in status_list[country][doctype]:
-            status_list[country][doctype]["identifier_list"].update({str(index): 1})
+            status_list[country][doctype]["identifier_list"]["identifiers"].update({str(index):{}})
