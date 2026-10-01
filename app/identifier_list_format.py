@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 from app.config_service import ConfService as cfgservice
-
+from app.status_list_format import cose_es256_sign
 
 def identifier_list_jwt_format(
     identifier_list: dict, country: str, list_url: str
@@ -116,20 +116,23 @@ def identifier_list_cwt_format(
     unprotected = {4: b"1"}
     protected = {1: -7, 16: "application/identifierlist+cwt", 33: _cert}
 
+    identifier_list["identifiers"] = {
+        key.encode("utf-8"): value
+        for key, value in identifier_list["identifiers"].items()
+    }
+
     claims = {
         1: cfgservice.service_url[:-1],
         2: list_url,
         6: int(time.time()),
         # 4: int((datetime.now() + timedelta(days=1)).timestamp()),
-        65533: identifier_list,
+        65530: identifier_list,
     }
 
     cbor_header = cbor2.dumps(protected)
     cbor_claims = cbor2.dumps(claims)
 
-    message = cbor_header + cbor_claims
-
-    signature = private_key.sign(message, ec.ECDSA(hashes.SHA256()))
+    signature = cose_es256_sign(private_key, cbor_header, cbor_claims)
 
     cose_sign1 = [cbor_header, unprotected, cbor_claims, signature]
     tagged = cbor2.CBORTag(18, cose_sign1)
@@ -138,6 +141,5 @@ def identifier_list_cwt_format(
         private_key.public_key().verify(signature, message, ec.ECDSA(hashes.SHA256()))
         print("CWT signature is valid.")
     except:
-        print("CWT signature is invalid.") """
 
     return cbor2.dumps(tagged)

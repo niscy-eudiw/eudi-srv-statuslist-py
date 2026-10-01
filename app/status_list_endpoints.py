@@ -169,7 +169,7 @@ def set_index():
     
     temp_list["token_status_list"].status_list.set(index, status)
 
-    temp_list["identifier_list"].update({str(index): status})
+    temp_list["identifier_list"]["identifiers"].update({str(index):{}})
 
     parsed_url = urlparse(uri)
     path_parts = parsed_url.path.split("/")
