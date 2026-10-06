@@ -27,6 +27,17 @@ from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 from app.config_service import ConfService as cfgservice
 
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+
+def cose_es256_sign(private_key, cbor_header: bytes, cbor_claims: bytes) -> bytes:
+    """
+    Signs a COSE_Sign1 Sig_structure with ES256 and returns raw r||s (64 bytes)
+    """
+    sig_structure = cbor2.dumps(["Signature1", cbor_header, b"", cbor_claims])
+    der_signature = private_key.sign(sig_structure, ec.ECDSA(hashes.SHA256()))
+    r, s = decode_dss_signature(der_signature)
+    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
 
 def jwt_format(token_status_list: IssuerStatusList, country: str, list_url: str) -> str:
     """
@@ -132,9 +143,7 @@ def cwt_format(
     cbor_header = cbor2.dumps(protected)
     cbor_claims = cbor2.dumps(claims)
 
-    message = cbor_header + cbor_claims
-
-    signature = private_key.sign(message, ec.ECDSA(hashes.SHA256()))
+    signature = cose_es256_sign(private_key, cbor_header, cbor_claims)
 
     cose_sign1 = [cbor_header, unprotected, cbor_claims, signature]
     tagged = cbor2.CBORTag(18, cose_sign1)
