@@ -41,6 +41,9 @@ MAX_IDENTIFIER = 64
 #: Largest body of a batch request, in bytes.
 MAX_BATCH_BODY = 1024 * 1024
 
+#: Error answered (401) when ``X-Api-Key`` is missing or wrong.
+INCORRECT_API_KEY = "Incorrect API key"
+
 
 class BadRequest(ValueError):
     """A request value the service rejects with 400."""
@@ -195,8 +198,8 @@ def take_index():
     logger.info("Take request, payload: %s", safe(request.form.to_dict()))
 
     if not api_key_valid():
-        logger.error("Incorrect API key")
-        return jsonify({"error": "Incorrect API key"}), 401
+        logger.error(INCORRECT_API_KEY)
+        return _error(INCORRECT_API_KEY, 401)
 
     try:
         doctype, country, expiry_date = _take_fields(request.form)
@@ -213,8 +216,8 @@ def take_index():
 def take_batch():
     """Takes ``count`` indices of one country, doctype and expiry date (JSON body)."""
     if not api_key_valid():
-        logger.error("Incorrect API key")
-        return _error("Incorrect API key", 401)
+        logger.error(INCORRECT_API_KEY)
+        return _error(INCORRECT_API_KEY, 401)
 
     try:
         body = _batch_body()
@@ -309,7 +312,7 @@ def _parse_ref(ref) -> Ref:
 def set_batch():
     """Revokes every entry of ``refs``, all or none (JSON body)."""
     if not api_key_valid():
-        return _error("Incorrect API key", 401)
+        return _error(INCORRECT_API_KEY, 401)
 
     try:
         refs = _batch_body().get("refs")
