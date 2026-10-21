@@ -264,6 +264,13 @@ class TestTakeMany:
         assert info.keys() == {"status_list", "identifier_list"}
         assert len(info["identifier_list"]["id"]) == 32
 
+    @pytest.mark.parametrize("count", [0, -1, 6])
+    def test_rejects_count_out_of_bounds(self, configuration, count):
+        configuration["batch_max_size"] = 5
+        with pytest.raises(ValueError, match="between 1 and 5"):
+            lm.take_many("FC", PID, "2099-01-01", count)
+        assert storage.current_list_id("FC", PID) is None
+
 
 class TestRevokeMany:
     def test_revokes_across_doctypes_signing_each_list_once(self, monkeypatch):

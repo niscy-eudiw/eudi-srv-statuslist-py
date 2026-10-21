@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import Any, NamedTuple
 
 from app import storage
+from app.config import CONFIGURATION
 from app.status_list import NoMoreIndices
 from app.storage import IDENTIFIER_LIST, TOKEN_LIST, CorruptList, ListNotFound
 
@@ -113,7 +114,13 @@ def take_many(country: str, doctype: str, expiry_date: str, count: int) -> list[
 
     Returns:
         The pointers of every index, in the order they were taken.
+
+    Raises:
+        ValueError: ``count`` is not between 1 and ``batch_max_size``.
     """
+    max_count = CONFIGURATION["batch_max_size"]
+    if not 1 <= count <= max_count:
+        raise ValueError(f"count must be between 1 and {max_count}")
     with storage.country_doctype_lock(country, doctype):
         entry = _current_entry(country, doctype)
         touched: dict[str, dict[str, Any]] = {}
