@@ -91,6 +91,18 @@ def test_revocations_while_taking(configuration):
     check_all_files(configuration)
 
 
+def test_concurrent_revocations_by_identifier(configuration):
+    taken = lm.take_many("FC", PID, "2099-01-01", 60)
+    list_id = ref(taken[0])[0]
+    with ThreadPoolExecutor(16) as pool:
+        list(pool.map(lambda info: lm.revoke("FC", PID, list_id, identifier=info["identifier_list"]["id"]), taken))
+    token_dir, identifier_dir = dirs("FC", PID, list_id)
+    check_list_files(token_dir, identifier_dir)
+    assert all(jwt_status(token_dir, ref(info)[1]) == 1 for info in taken)
+    identifiers = storage.load_entry("FC", PID, list_id)["identifier_list"]["identifiers"]
+    assert set(identifiers) == {info["identifier_list"]["id"] for info in taken}
+
+
 def test_revocations_during_renewal(configuration):
     taken = [ref(lm.take("FC", PID, "2099-01-01")) for _ in range(40)]
     done = threading.Event()
@@ -122,6 +134,34 @@ def test_rollover_under_load(configuration):
     assert len({list_id for list_id, _ in taken}) == 10
     assert all(0 <= idx < 8 for _, idx in taken)
     assert storage.current_list_id("LU", MDL) == other
+    check_all_files(configuration)
+
+
+def test_batch_takes_with_single_takes_across_rollovers(configuration):
+    configuration["token_status_list_size"] = 8
+
+    def work(n):
+        if n % 2:
+            return [ref(info) for info in lm.take_many("FC", PID, "2099-01-01", 5)]
+        return [ref(lm.take("FC", PID, "2099-01-01"))]
+
+    with ThreadPoolExecutor(16) as pool:
+        taken = [r for batch in pool.map(work, range(40)) for r in batch]
+    assert len(taken) == 120
+    assert len(set(taken)) == 120
+    check_all_files(configuration)
+
+
+def test_overlapping_revoke_batches_do_not_deadlock(configuration):
+    """Batches naming the same doctypes in opposite orders."""
+    pid = [lm.Ref("FC", PID, *ref(info)) for info in lm.take_many("FC", PID, "2099-01-01", 40)]
+    mdl = [lm.Ref("FC", MDL, *ref(info)) for info in lm.take_many("FC", MDL, "2099-01-01", 40)]
+    batches = [pid[i:i + 4] + mdl[i:i + 4] if i % 8 else mdl[i:i + 4] + pid[i:i + 4] for i in range(0, 40, 4)]
+    with ThreadPoolExecutor(10) as pool:
+        futures = [pool.submit(lm.revoke_many, batch) for batch in batches * 3]
+        assert [f.result(timeout=30) for f in futures] == [8] * 30
+    for r in pid + mdl:
+        assert jwt_status(dirs(r.country, r.doctype, r.list_id)[0], r.index) == 1
     check_all_files(configuration)
 
 

@@ -32,6 +32,10 @@ debug: false
 # 1 bit per entry). A full list is followed by a new one.
 token_status_list_size: 10000
 
+# Most indices one /take/batch request may take, and most entries one
+# /set/batch request may revoke (default 1000). Larger batches get 413.
+batch_max_size: 1000
+
 # Time to live of the CWT status list (claim 65534), in seconds (default 3600).
 status_list_ttl: 3600
 

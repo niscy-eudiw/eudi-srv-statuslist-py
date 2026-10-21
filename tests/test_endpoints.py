@@ -24,8 +24,13 @@ def take(client, headers, doctype=PID, country="FC", expiry_date=FUTURE):
     )
 
 
-def get(client, uri, idx):
-    return client.get("/token_status_list/get", query_string={"uri": uri, "idx": idx})
+def get(client, uri, idx=None, id=None):
+    query = {"uri": uri, **({} if idx is None else {"idx": idx}), **({} if id is None else {"id": id})}
+    return client.get("/token_status_list/get", query_string=query)
+
+
+def is_random_id(value):
+    return isinstance(value, str) and len(value) == 32 and int(value, 16) >= 0 and not value.isdigit()
 
 
 def revoke(client, headers, uri, idx, status=1):
@@ -40,7 +45,7 @@ class TestTake:
         status, identifier = body["status_list"], body["identifier_list"]
         assert status["uri"].startswith(f"https://statuslist.test/token_status_list/FC/{PID}/")
         assert identifier["uri"].startswith(f"https://statuslist.test/identifier_list/FC/{PID}/")
-        assert identifier["id"] == str(status["idx"])
+        assert is_random_id(identifier["id"])
         assert 0 <= status["idx"] < 10000
 
     def test_writes_signed_lists(self, client, headers, configuration):
@@ -96,7 +101,8 @@ class TestGet:
     def test_status_and_identifier_lists(self, client, headers):
         body = take(client, headers).json
         assert get(client, body["status_list"]["uri"], body["status_list"]["idx"]).data == b"0"
-        assert get(client, body["identifier_list"]["uri"], body["identifier_list"]["id"]).data == b"0"
+        assert get(client, body["identifier_list"]["uri"], id=body["identifier_list"]["id"]).data == b"0"
+        assert get(client, body["identifier_list"]["uri"], body["status_list"]["idx"]).data == b"0"
 
     @pytest.mark.parametrize("query", [{}, {"uri": "x"}, {"idx": "1"}])
     def test_missing_parameters(self, client, query):
@@ -118,12 +124,25 @@ class TestGet:
         assert response.status_code == 400
         assert response.json == {"error": "uri is not a list of this service"}
 
-    def test_accepts_id_parameter(self, client, headers):
+    def test_id_is_not_the_index(self, client, headers):
         body = take(client, headers).json
-        response = client.get(
-            "/token_status_list/get", query_string={"uri": body["status_list"]["uri"], "id": body["status_list"]["idx"]}
-        )
-        assert response.data == b"0"
+        assert get(client, body["status_list"]["uri"], id=body["identifier_list"]["id"]).data == b"0"
+        response = get(client, body["status_list"]["uri"], id=str(body["status_list"]["idx"]))
+        assert response.status_code == 404
+        assert response.json == {"error": "Unknown identifier"}
+
+    @pytest.mark.parametrize("id", ["x" * 65])
+    def test_id_too_long(self, client, headers, id):
+        uri = take(client, headers).json["status_list"]["uri"]
+        assert get(client, uri, id=id).status_code == 400
+
+    def test_id_and_idx_must_agree(self, client, headers):
+        first, second = take(client, headers).json, take(client, headers).json
+        uri, idx = first["status_list"]["uri"], first["status_list"]["idx"]
+        assert get(client, uri, idx, id=first["identifier_list"]["id"]).data == b"0"
+        response = get(client, uri, idx, id=second["identifier_list"]["id"])
+        assert response.status_code == 400
+        assert response.json == {"error": "id and idx name different entries"}
 
     def test_unknown_list(self, client):
         response = get(client, f"https://statuslist.test/token_status_list/FC/{PID}/{UNKNOWN_ID}", 1)
@@ -134,7 +153,7 @@ class TestGet:
         """Before, /get on the identifier list always answered 0."""
         body = take(client, headers).json
         revoke(client, headers, body["status_list"]["uri"], body["status_list"]["idx"])
-        assert get(client, body["identifier_list"]["uri"], body["identifier_list"]["id"]).data == b"1"
+        assert get(client, body["identifier_list"]["uri"], id=body["identifier_list"]["id"]).data == b"1"
 
     @pytest.mark.parametrize("idx", ["-1", "10000", str(10**12)])
     def test_index_out_of_range(self, client, headers, idx):
@@ -272,11 +291,248 @@ class TestSetValidation:
         assert response.status_code == 200
         assert get(client, body["status_list"]["uri"], body["status_list"]["idx"]).data == b"1"
 
+    def test_by_identifier(self, client, headers):
+        body = take(client, headers).json
+        data = {"uri": body["identifier_list"]["uri"], "id": body["identifier_list"]["id"], "status": 1}
+        assert client.post("/token_status_list/set", headers=headers, data=data).status_code == 200
+        assert get(client, body["status_list"]["uri"], body["status_list"]["idx"]).data == b"1"
+
+    def test_index_with_the_identifier_list_uri(self, client, headers):
+        body = take(client, headers).json
+        assert revoke(client, headers, body["identifier_list"]["uri"], body["status_list"]["idx"]).status_code == 200
+        assert get(client, body["identifier_list"]["uri"], id=body["identifier_list"]["id"]).data == b"1"
+
+    def test_id_and_idx_must_agree(self, client, headers):
+        first, second = take(client, headers).json, take(client, headers).json
+        data = {"uri": first["status_list"]["uri"], "idx": first["status_list"]["idx"],
+                "id": second["identifier_list"]["id"], "status": 1}
+        response = client.post("/token_status_list/set", headers=headers, data=data)
+        assert response.status_code == 400
+        assert response.json == {"error": "id and idx name different entries"}
+        data["id"] = first["identifier_list"]["id"]
+        assert client.post("/token_status_list/set", headers=headers, data=data).status_code == 200
+        assert get(client, second["status_list"]["uri"], second["status_list"]["idx"]).data == b"0"
+
+    def test_unknown_identifier(self, client, headers):
+        body = take(client, headers).json
+        data = {"uri": body["identifier_list"]["uri"], "id": str(body["status_list"]["idx"]), "status": 1}
+        response = client.post("/token_status_list/set", headers=headers, data=data)
+        assert response.status_code == 404
+        assert response.json == {"error": "Unknown identifier"}
+
+    def test_untaken_entry(self, client, headers, configuration):
+        configuration["token_status_list_size"] = 8
+        body = take(client, headers).json["status_list"]
+        free = next(i for i in range(8) if i != body["idx"])
+        response = revoke(client, headers, body["uri"], free)
+        assert response.status_code == 404
+        assert response.json == {"error": "Unknown entry"}
+
     def test_revoking_twice(self, client, headers):
         body = take(client, headers).json
         uri, idx = body["status_list"]["uri"], body["status_list"]["idx"]
         assert revoke(client, headers, uri, idx).status_code == 200
         assert revoke(client, headers, uri, idx).status_code == 200
+
+
+def take_batch(client, headers, count=3, **fields):
+    body = {"doctype": PID, "country": "FC", "expiry_date": FUTURE, "count": count, **fields}
+    return client.post("/token_status_list/take/batch", headers=headers, json=body)
+
+
+def revoke_batch(client, headers, refs):
+    return client.post("/token_status_list/set/batch", headers=headers, json={"refs": refs})
+
+
+class TestTakeBatch:
+    def test_returns_take_items(self, client, headers):
+        response = take_batch(client, headers, 3)
+        assert response.status_code == 200
+        items = response.json["items"]
+        assert len(items) == 3
+        assert len({item["status_list"]["idx"] for item in items}) == 3
+        single = take(client, headers).json
+        for item in items:
+            assert item.keys() == single.keys()
+            assert item["status_list"]["uri"] == single["status_list"]["uri"]
+            assert is_random_id(item["identifier_list"]["id"])
+
+    def test_spans_a_rollover_and_publishes_the_new_list(self, client, headers, configuration):
+        configuration["token_status_list_size"] = 8
+        items = take_batch(client, headers, 12).json["items"]
+        uris = list(dict.fromkeys(item["status_list"]["uri"] for item in items))
+        assert len(uris) == 2
+        assert len({(item["status_list"]["uri"], item["status_list"]["idx"]) for item in items}) == 12
+        for uri in uris:
+            assert "token_status_list.jwt" in os.listdir(configuration["status_list_dir"] + urlparse(uri).path)
+
+    @pytest.mark.parametrize("key", [None, "wrong"])
+    def test_api_key_required(self, client, key):
+        response = take_batch(client, {"X-Api-Key": key} if key else {})
+        assert response.status_code == 401
+        assert response.json == {"error": "Incorrect API key"}
+
+    @pytest.mark.parametrize(
+        "fields,error",
+        [
+            ({"doctype": "unknown.doctype"}, "Invalid document type"),
+            ({"country": ["FC"]}, "Missing country"),
+            ({"expiry_date": "2000-01-01"}, "Expiry date must be in the future."),
+            ({"count": 0}, "count must be at least 1"),
+            ({"count": "3"}, "count must be an integer"),
+            ({"count": True}, "count must be an integer"),
+        ],
+    )
+    def test_invalid_input(self, client, headers, configuration, fields, error):
+        response = take_batch(client, headers, **fields)
+        assert response.status_code == 400
+        assert response.json == {"error": error}
+        assert not os.path.exists(configuration["status_list_dir"])
+
+    def test_over_the_cap(self, client, headers, configuration):
+        configuration["batch_max_size"] = 5
+        assert take_batch(client, headers, 5).status_code == 200
+        response = take_batch(client, headers, 6)
+        assert response.status_code == 413
+        assert response.json == {"error": "count must be at most 5"}
+
+    def test_json_required(self, client, headers):
+        response = client.post(
+            "/token_status_list/take/batch",
+            headers=headers,
+            data={"doctype": PID, "country": "FC", "expiry_date": FUTURE, "count": 1},
+        )
+        assert response.status_code == 400
+        assert response.json == {"error": "Content-Type must be application/json"}
+
+    @pytest.mark.parametrize("body", ["[1]", "{", "null"])
+    def test_body_must_be_an_object(self, client, headers, body):
+        response = client.post(
+            "/token_status_list/take/batch", headers=headers, data=body, content_type="application/json"
+        )
+        assert response.status_code == 400
+        assert response.json == {"error": "body must be a JSON object"}
+
+
+class TestSetBatch:
+    def test_revokes_every_ref(self, client, headers):
+        items = take_batch(client, headers, 3).json["items"] + take_batch(client, headers, 1, doctype=MDL).json["items"]
+        refs = [{"uri": item["status_list"]["uri"], "idx": item["status_list"]["idx"]} for item in items]
+        response = revoke_batch(client, headers, refs)
+        assert response.status_code == 200
+        assert response.json == {"revoked": 4}
+        for item in items:
+            assert get(client, item["status_list"]["uri"], item["status_list"]["idx"]).data == b"1"
+            assert get(client, item["identifier_list"]["uri"], id=item["identifier_list"]["id"]).data == b"1"
+
+    def test_same_entry_through_both_uris_counts_once(self, client, headers):
+        item = take(client, headers).json
+        refs = [
+            {"uri": item["status_list"]["uri"], "idx": item["status_list"]["idx"]},
+            {"uri": item["identifier_list"]["uri"], "id": item["identifier_list"]["id"]},
+            {"uri": item["status_list"]["uri"], "idx": str(item["status_list"]["idx"])},
+        ]
+        assert revoke_batch(client, headers, refs).json == {"revoked": 1}
+
+    def test_idx_zero(self, client, headers, configuration):
+        configuration["token_status_list_size"] = 8
+        uri = take_batch(client, headers, 8).json["items"][0]["status_list"]["uri"]
+        assert revoke_batch(client, headers, [{"uri": uri, "idx": 0}]).status_code == 200
+        assert get(client, uri, 0).data == b"1"
+        assert get(client, uri, 5).data == b"0"
+
+    def test_by_id_and_by_both(self, client, headers):
+        first, second = take_batch(client, headers, 2).json["items"]
+        refs = [
+            {"uri": first["identifier_list"]["uri"], "id": first["identifier_list"]["id"]},
+            {"uri": second["status_list"]["uri"], "idx": second["status_list"]["idx"], "id": second["identifier_list"]["id"]},
+        ]
+        assert revoke_batch(client, headers, refs).json == {"revoked": 2}
+        for item in (first, second):
+            assert get(client, item["status_list"]["uri"], item["status_list"]["idx"]).data == b"1"
+
+    def test_already_revoked(self, client, headers):
+        item = take(client, headers).json["status_list"]
+        revoke(client, headers, item["uri"], item["idx"])
+        assert revoke_batch(client, headers, [item]).json == {"revoked": 1}
+
+    @pytest.mark.parametrize("key", [None, "wrong"])
+    def test_api_key_required(self, client, key):
+        response = revoke_batch(client, {"X-Api-Key": key} if key else {}, [])
+        assert response.status_code == 401
+        assert response.json == {"error": "Incorrect API key"}
+
+    @pytest.mark.parametrize(
+        "bad,status,error",
+        [
+            ({"uri": None, "idx": 1}, 400, "refs[1]: Missing URI or idx/id"),
+            ("x", 400, "refs[1]: must be an object with 'uri' and 'idx' or 'id'"),
+            ({"uri": "https://other.host/x", "idx": 1}, 400, "refs[1]: uri is not a list of this service"),
+            ({"idx": 1.5}, 400, "refs[1]: 'id' or 'idx' unkown"),
+            ({"idx": -1}, 400, "refs[1]: index must not be negative"),
+            ({"idx": 10000}, 400, "refs[1]: index must be between 0 and 9999"),
+            ({"uri": f"https://statuslist.test/token_status_list/FC/{PID}/{UNKNOWN_ID}", "idx": 1}, 404, "refs[1]: Unknown list"),
+            ({"id": "f" * 32}, 404, "refs[1]: Unknown identifier"),
+            ({"id": 5}, 400, "refs[1]: 'id' must be a string of 1 to 64 characters"),
+            ({"id": ""}, 400, "refs[1]: 'id' must be a string of 1 to 64 characters"),
+        ],
+    )
+    def test_one_bad_ref_revokes_nothing(self, client, headers, bad, status, error):
+        item = take(client, headers).json["status_list"]
+        if isinstance(bad, dict):
+            bad = {"uri": item["uri"], **bad}
+        response = revoke_batch(client, headers, [item, bad])
+        assert response.status_code == status
+        assert response.json == {"error": error}
+        assert get(client, item["uri"], item["idx"]).data == b"0"
+
+    def test_conflicting_and_untaken_refs(self, client, headers, configuration):
+        configuration["token_status_list_size"] = 8
+        first, second = take_batch(client, headers, 2).json["items"]
+        uri = first["status_list"]["uri"]
+        conflict = {"uri": uri, "idx": first["status_list"]["idx"], "id": second["identifier_list"]["id"]}
+        response = revoke_batch(client, headers, [first["status_list"], conflict])
+        assert response.status_code == 400
+        assert response.json == {"error": "refs[1]: id and idx name different entries"}
+        taken = {first["status_list"]["idx"], second["status_list"]["idx"]}
+        free = next(i for i in range(8) if i not in taken)
+        response = revoke_batch(client, headers, [first["status_list"], {"uri": uri, "idx": free}])
+        assert response.status_code == 404
+        assert response.json == {"error": "refs[1]: Unknown entry"}
+        assert get(client, uri, first["status_list"]["idx"]).data == b"0"
+
+    def test_corrupt_list(self, client, headers, configuration):
+        good = take(client, headers).json["status_list"]
+        bad = take(client, headers, MDL).json["status_list"]
+        open(configuration["status_list_dir"] + urlparse(bad["uri"]).path + "/full_list.json", "w").write("{")
+        response = revoke_batch(client, headers, [good, bad])
+        assert response.status_code == 500
+        assert response.json == {"error": "refs[1]: List unavailable"}
+        assert get(client, good["uri"], good["idx"]).data == b"0"
+
+    @pytest.mark.parametrize("refs,error", [([], "refs must be at least 1"), ({}, "refs must be a list")])
+    def test_refs_must_be_a_non_empty_list(self, client, headers, refs, error):
+        response = revoke_batch(client, headers, refs)
+        assert response.status_code == 400
+        assert response.json == {"error": error}
+
+    def test_over_the_cap(self, client, headers, configuration):
+        configuration["batch_max_size"] = 2
+        item = take(client, headers).json["status_list"]
+        assert revoke_batch(client, headers, [item] * 2).status_code == 200
+        response = revoke_batch(client, headers, [item] * 3)
+        assert response.status_code == 413
+        assert response.json == {"error": "refs must be at most 2"}
+
+    def test_body_over_one_mebibyte(self, client, headers):
+        response = revoke_batch(client, headers, ["x" * 1024 * 1024])
+        assert response.status_code == 413
+        assert response.is_json
+
+    def test_json_required(self, client, headers):
+        response = client.post("/token_status_list/set/batch", headers=headers, data={"refs": "x"})
+        assert response.status_code == 400
+        assert response.json == {"error": "Content-Type must be application/json"}
 
 
 class TestErrors:

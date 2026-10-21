@@ -168,6 +168,7 @@ def new_entry(country: str, doctype: str) -> dict[str, Any]:
     return {
         "token_status_list": IssuerStatusList.new(1, CONFIGURATION["token_status_list_size"]),
         "identifier_list": {"identifiers": {}},
+        "ids": {},
         "expires": None,
         "rand": list_id,
         "country": country,
@@ -184,7 +185,8 @@ def _stringify_keys(d: dict) -> dict:
 def load_entry(country: str, doctype: str, list_id: str) -> dict[str, Any]:
     """Reads one list from its ``full_list.json``.
 
-    Lists written before the URIs were stored get them back.
+    Lists written before the URIs were stored get them back, and lists from
+    before the random identifier list ids an empty ``ids``.
 
     Raises:
         ListNotFound: No such list.
@@ -203,6 +205,12 @@ def load_entry(country: str, doctype: str, list_id: str) -> dict[str, Any]:
         data["identifier_list"]["identifiers"] = _stringify_keys(identifiers)
     except AttributeError as e:
         raise CorruptList(f"{path}: {e}") from e
+    # Identifier list id of each index; lists from before the random ids have none.
+    ids = data.setdefault("ids", {})
+    if not isinstance(ids, dict) or not all(
+        isinstance(index, str) and index.isdigit() and isinstance(identifier, str) for index, identifier in ids.items()
+    ):
+        raise CorruptList(f"{path}: 'ids' must map indices to identifiers")
     data.update(
         country=country,
         doctype=doctype,

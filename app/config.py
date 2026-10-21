@@ -49,6 +49,7 @@ DEFAULTS: dict[str, Any] = {
     "service_url": "https://dev.issuer.eudiw.dev/",
     "debug": False,
     "token_status_list_size": 10000,
+    "batch_max_size": 1000,
     "status_list_ttl": 3600,
     "status_list_dir": "/var/opt/status_lists_dev",
     "backup_dir": "/var/opt/status_list_backup_dev",
