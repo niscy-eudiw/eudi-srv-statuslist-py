@@ -198,8 +198,8 @@ def load_entry(country: str, doctype: str, list_id: str) -> dict[str, Any]:
         data["token_status_list"] = IssuerStatusList.load(data["token_status_list"])
     except FileNotFoundError as e:
         raise ListNotFound(f"{country}/{doctype}/{list_id}") from e
-    except (ValueError, TypeError, KeyError, AttributeError) as e:
-        raise CorruptList(f"{path}: {e}") from e
+    except (ValueError, TypeError, KeyError, AttributeError, RecursionError) as e:
+        raise CorruptList(f"{path}: {e!r}") from e
     try:
         identifiers = data.setdefault("identifier_list", {}).get("identifiers") or {}
         data["identifier_list"]["identifiers"] = _stringify_keys(identifiers)

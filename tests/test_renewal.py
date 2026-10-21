@@ -51,6 +51,23 @@ class TestNextRenewal:
         assert lists_renewal.next_renewal(datetime(2026, 1, 1, 7)) == datetime(2026, 1, 1, 18)
         assert lists_renewal.next_renewal(datetime(2026, 1, 1, 19)) == datetime(2026, 1, 2, 6)
 
+    def test_errors_do_not_stop_the_renewal_thread(self, monkeypatch, caplog):
+        class Stop(BaseException):
+            pass
+
+        def broken(now):
+            raise RuntimeError("boom")
+
+        def sleep(seconds):
+            assert seconds == 60
+            raise Stop
+
+        monkeypatch.setattr(lists_renewal, "next_renewal", broken)
+        monkeypatch.setattr(lists_renewal.time, "sleep", sleep)
+        with pytest.raises(Stop):
+            lists_renewal.daily_renewal()
+        assert "List renewal failed" in caplog.text
+
     def test_no_hours(self, configuration):
         configuration["renewal"]["hours"] = []
         with pytest.raises(RuntimeError, match="renewal.hours"):

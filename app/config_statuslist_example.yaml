@@ -36,8 +36,19 @@ token_status_list_size: 10000
 # /set/batch request may revoke (default 1000). Larger batches get 413.
 batch_max_size: 1000
 
-# Time to live of the CWT status list (claim 65534), in seconds (default 3600).
+# Time to live of the signed lists (JWT "ttl", CWT claim 65534), in seconds
+# (default 3600): how long a relying party may cache a list before fetching it again.
 status_list_ttl: 3600
+
+# Validity of the signed lists (JWT "exp", CWT claim 4), in seconds from
+# signing (default 86400). Must be more than the longest time between two
+# renewal hours plus one hour (13 hours with the default [0, 12]), so a list
+# is re-signed before it expires. Relying parties reject an expired list.
+status_list_validity: 86400
+
+# Furthest expiry_date /take accepts, in days from today (default 3650).
+# Expiry dates are UTC days; a list is kept until the day after its last one.
+max_expiry_days: 3650
 
 # Where the lists are written (default /var/opt/status_lists_dev) and where
 # every renewal copies the previous ones (default /var/opt/status_list_backup_dev).
@@ -47,7 +58,7 @@ backup_dir: /var/opt/status_list_backup_dev
 
 renewal:
   # Local hours at which the lists are re-signed and expired lists removed
-  # (default [0, 12]).
+  # (default [0, 12]). Distinct integers from 0 to 23.
   hours: [0, 12]
 
 logging:

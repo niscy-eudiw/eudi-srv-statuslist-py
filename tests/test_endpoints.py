@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import pytest
+from flask import wrappers
 
 from app.storage import FULL_LIST
 from tests.conftest import MDL, PID
@@ -74,7 +75,7 @@ class TestTake:
     def test_api_key_required(self, client, key):
         response = take(client, {"X-Api-Key": key} if key else {})
         assert response.status_code == 401
-        assert response.json == {"error": "Incorrect API key"}
+        assert response.json == {"message": "Unauthorized access"}
 
     @pytest.mark.parametrize(
         "field,value,error",
@@ -201,7 +202,12 @@ class TestSet:
 
     @pytest.mark.parametrize(
         "idx,status,error",
-        [("a", 1, "'id' or 'idx' unkown"), (1, "x", " status unkown"), (1, 0, "Wrong Status Change"), (1, 2, "Wrong Status Change")],
+        [
+            ("a", 1, "'idx' must be a non-negative integer"),
+            (1, "x", "Wrong Status Change"),
+            (1, 0, "Wrong Status Change"),
+            (1, 2, "Wrong Status Change"),
+        ],
     )
     def test_invalid_input(self, client, headers, idx, status, error):
         response = revoke(client, headers, "https://statuslist.test/token_status_list/FC/x/y", idx, status)
@@ -370,7 +376,7 @@ class TestTakeBatch:
     def test_api_key_required(self, client, key):
         response = take_batch(client, {"X-Api-Key": key} if key else {})
         assert response.status_code == 401
-        assert response.json == {"error": "Incorrect API key"}
+        assert response.json == {"message": "Unauthorized access"}
 
     @pytest.mark.parametrize(
         "fields,error",
@@ -460,7 +466,7 @@ class TestSetBatch:
     def test_api_key_required(self, client, key):
         response = revoke_batch(client, {"X-Api-Key": key} if key else {}, [])
         assert response.status_code == 401
-        assert response.json == {"error": "Incorrect API key"}
+        assert response.json == {"message": "Unauthorized access"}
 
     @pytest.mark.parametrize(
         "bad,status,error",
@@ -468,8 +474,8 @@ class TestSetBatch:
             ({"uri": None, "idx": 1}, 400, "refs[1]: Missing URI or idx/id"),
             ("x", 400, "refs[1]: must be an object with 'uri' and 'idx' or 'id'"),
             ({"uri": "https://other.host/x", "idx": 1}, 400, "refs[1]: uri is not a list of this service"),
-            ({"idx": 1.5}, 400, "refs[1]: 'id' or 'idx' unkown"),
-            ({"idx": -1}, 400, "refs[1]: index must not be negative"),
+            ({"idx": 1.5}, 400, "refs[1]: 'idx' must be a non-negative integer"),
+            ({"idx": -1}, 400, "refs[1]: 'idx' must be a non-negative integer"),
             ({"idx": 10000}, 400, "refs[1]: index must be between 0 and 9999"),
             ({"uri": f"https://statuslist.test/token_status_list/FC/{PID}/{UNKNOWN_ID}", "idx": 1}, 404, "refs[1]: Unknown list"),
             ({"id": "f" * 32}, 404, "refs[1]: Unknown identifier"),
@@ -551,3 +557,60 @@ class TestErrors:
         response = take(client, headers)
         assert response.status_code == 500
         assert response.json == {"error": "Internal server error"}
+
+
+class TestRequests:
+    @pytest.mark.parametrize("path", ["/token_status_list/take", "/token_status_list/take/batch", "/token_status_list/set", "/token_status_list/set/batch"])
+    def test_failed_api_key_is_logged(self, client, path, caplog):
+        response = client.post(path, headers={"X-Api-Key": "wrong"})
+        assert response.status_code == 401
+        assert response.json == {"message": "Unauthorized access"}
+        assert f"Unauthorized access: POST {path}" in caplog.text
+
+    def test_plain_text_bodies(self, client, headers):
+        body = take(client, headers).json["status_list"]
+        response = get(client, body["uri"], body["idx"])
+        assert (response.mimetype, response.data) == ("text/plain", b"0")
+        response = revoke(client, headers, body["uri"], body["idx"])
+        assert (response.mimetype, response.data) == ("text/plain", b"Status Changed\n")
+
+    def test_every_body_is_bounded(self, client, headers):
+        data = {"doctype": PID, "country": "FC", "expiry_date": FUTURE, "x": "x" * (1024 * 1024)}
+        assert client.post("/token_status_list/take", headers=headers, data=data).status_code == 413
+
+    def test_percent_encoded_uri_is_rejected(self, client, headers):
+        body = take(client, headers).json["status_list"]
+        encoded = body["uri"].replace("/FC/", "/F%43/")
+        response = get(client, encoded, body["idx"])
+        assert response.status_code == 400
+        assert get(client, body["uri"], body["idx"]).status_code == 200
+
+    def test_expiry_date_up_to_max_expiry_days(self, client, headers, configuration):
+        configuration["max_expiry_days"] = 30
+        today = datetime.now(timezone.utc).date()
+        assert take(client, headers, expiry_date=today.isoformat()).status_code == 200
+        assert take(client, headers, expiry_date=(today + timedelta(days=30)).isoformat()).status_code == 200
+        response = take(client, headers, expiry_date=(today + timedelta(days=31)).isoformat())
+        assert response.status_code == 400
+        assert response.json == {"error": "Expiry date must be at most 30 days from today."}
+        assert take(client, headers, expiry_date=(today - timedelta(days=1)).isoformat()).status_code == 400
+
+    @pytest.mark.parametrize("path", ["/token_status_list/take", "/token_status_list/set"])
+    def test_malformed_form_body_is_a_bad_request(self, client, headers, monkeypatch, path):
+        def broken(self):
+            raise OSError("Invalid chunk header")
+
+        monkeypatch.setattr(wrappers.Request, "_load_form_data", broken)
+        response = client.post(path, headers=headers, data={"uri": "u"})
+        assert response.status_code == 400
+        assert response.json == {"error": "Malformed request body"}
+
+    @pytest.mark.parametrize("path", ["/token_status_list/take/batch", "/token_status_list/set/batch"])
+    def test_malformed_json_body_is_a_bad_request(self, client, headers, monkeypatch, path):
+        def broken(self, *args, **kwargs):
+            raise OSError("Invalid chunk header")
+
+        monkeypatch.setattr(wrappers.Request, "get_data", broken)
+        response = client.post(path, headers=headers, json={"refs": []})
+        assert response.status_code == 400
+        assert response.json == {"error": "Malformed request body"}

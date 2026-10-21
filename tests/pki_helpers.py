@@ -28,6 +28,7 @@ def make_signer(
     country: str = "LU",
     password: str | None = None,
     pem_certificate: bool = False,
+    expired: bool = False,
 ) -> Signer:
     """Writes a self-signed EC P-256 key and certificate to ``directory``.
 
@@ -37,6 +38,7 @@ def make_signer(
         country: Certificate subject country.
         password: Encrypts the PEM key when given.
         pem_certificate: Writes the certificate as PEM instead of DER.
+        expired: The certificate expired yesterday.
 
     Returns:
         The written files and the key / certificate objects.
@@ -49,6 +51,8 @@ def make_signer(
         ]
     )
     now = datetime.datetime.now(datetime.timezone.utc)
+    if expired:
+        now -= datetime.timedelta(days=31)
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)

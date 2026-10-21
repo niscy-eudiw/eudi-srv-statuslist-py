@@ -30,6 +30,46 @@ class TestCreateApp:
         assert response.status_code == 200
         assert "/token_status_list/take" in response.json["paths"]
 
+    def test_swagger_json_documents_every_route(self, client):
+        """Every route is documented with the statuses it answers, and every $ref resolves."""
+        spec = client.get("/token_status_list/static/swagger.json").json
+        assert "servers" not in spec  # relative to the host serving it
+        routes = {
+            (rule.rule, method.lower())
+            for rule in client.application.url_map.iter_rules()
+            if rule.rule.startswith("/token_status_list/") and "static" not in rule.rule and "swagger" not in rule.rule
+            for method in rule.methods - {"HEAD", "OPTIONS"}
+        }
+        documented = {(path, method) for path, item in spec["paths"].items() for method in item}
+        assert documented == routes
+        statuses = {
+            "/token_status_list/get": {"200", "400", "404", "500"},
+            "/token_status_list/take": {"200", "400", "401", "413", "500"},
+            "/token_status_list/take/batch": {"200", "400", "401", "413", "500"},
+            "/token_status_list/set": {"200", "400", "401", "404", "413", "500"},
+            "/token_status_list/set/batch": {"200", "400", "401", "404", "413", "500"},
+        }
+        for path, method in routes:
+            operation = spec["paths"][path][method]
+            assert set(operation["responses"]) == statuses[path], path
+            if "401" in statuses[path]:
+                assert {"$ref": "#/components/parameters/ApiKey"} in operation["parameters"]
+
+        def refs(value):
+            if isinstance(value, dict):
+                if "$ref" in value:
+                    yield value["$ref"]
+                for item in value.values():
+                    yield from refs(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from refs(item)
+
+        for target in refs(spec):
+            node = spec
+            for part in target.removeprefix("#/").split("/"):
+                node = node[part]
+
     @pytest.mark.parametrize("key", [None, "", "test", "secret", "short-key"])
     def test_weak_api_key_rejected_outside_tests(self, configuration, monkeypatch, key):
         configuration["api_key"] = key

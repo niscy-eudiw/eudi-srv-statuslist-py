@@ -23,7 +23,7 @@ import logging
 import shutil
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +59,8 @@ def _renew_one(country: str, doctype: str, list_id: str, timestamp: str, report:
             report["corrupt"].append(name)
             return
         expires = entry.get("expires")
-        if expires and datetime.strptime(expires, "%Y-%m-%d") < datetime.now():
+        # Credentials are valid until the end of their (UTC) expiry day.
+        if expires and datetime.strptime(expires, "%Y-%m-%d").date() < datetime.now(timezone.utc).date():
             logger.info("Removing %s: expired on %s", name, expires)
             for directory in dirs:
                 shutil.rmtree(directory, ignore_errors=True)
@@ -134,24 +135,26 @@ def next_renewal(now: datetime) -> datetime:
 
 
 def daily_renewal():
+    """Renews the lists at every ``renewal.hours``, forever: no error stops the loop."""
     while True:
-        now = datetime.now()
-        next_execution = next_renewal(now)
-
-        seconds_until_execution = (next_execution - now).total_seconds()
-
-        logger.info(
-            f"Renewing in {int(seconds_until_execution // 3600):02}:{int((seconds_until_execution % 3600) // 60):02}:{round(seconds_until_execution % 60):02}"
-        )
-
-        time.sleep(seconds_until_execution)
-
-        logger.info("Renewing Revocation Lists")
-
         try:
+            now = datetime.now()
+            next_execution = next_renewal(now)
+
+            seconds_until_execution = (next_execution - now).total_seconds()
+
+            logger.info(
+                f"Renewing in {int(seconds_until_execution // 3600):02}:{int((seconds_until_execution % 3600) // 60):02}:{round(seconds_until_execution % 60):02}"
+            )
+
+            time.sleep(seconds_until_execution)
+
+            logger.info("Renewing Revocation Lists")
+
             renewal_pass()
         except Exception:
             logger.exception("List renewal failed")
+            time.sleep(60)
 
 
 def start_renewal_thread():

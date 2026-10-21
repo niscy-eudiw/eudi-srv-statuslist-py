@@ -57,13 +57,15 @@ def create_app():
         list renewal thread. The lists are kept on disk under a lock, so
         several processes may serve the same ``status_list_dir``.
     """
+    from app import status_list_endpoints
+
     app = Flask(__name__)
     app.debug = bool(CONFIGURATION["debug"])
+    # Every body is bounded (413 beyond it), whether or not it is read.
+    app.config["MAX_CONTENT_LENGTH"] = status_list_endpoints.MAX_BODY
 
     configure_logging(app, CONFIGURATION["logging"])
     _check_api_key()
-
-    from app import status_list_endpoints
 
     SWAGGER_URL = "/token_status_list/swagger"
     API_URL = CONFIGURATION["service_url"] + "token_status_list/static/swagger.json"
@@ -78,8 +80,12 @@ def create_app():
 
     @app.errorhandler(HTTPException)
     def http_error(error):
-        """Errors as JSON (``{"error": ...}``), never an HTML page."""
-        return jsonify({"error": error.description or error.name}), error.code
+        """Errors as JSON (``{"error": ...}``), never an HTML page.
+
+        The exception's own headers (``Allow`` on a 405, ...) are kept.
+        """
+        headers = [(name, value) for name, value in error.get_headers() if name.lower() != "content-type"]
+        return jsonify({"error": error.description or error.name}), error.code, headers
 
     @app.errorhandler(Exception)
     def server_error(error):

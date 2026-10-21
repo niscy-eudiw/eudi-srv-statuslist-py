@@ -5,23 +5,20 @@
     "version": "0.1.0",
     "contact": {}
   },
-  "servers": [
-    {
-      "url": "https://dev.issuer.eudiw.dev"
-    }
-  ],
   "paths": {
     "/token_status_list/get": {
       "get": {
         "summary": "Retrieve Token Status",
         "operationId": "getTokenStatusList",
-        "description": "Retrieves the status of a token from the revocation list. WARNING: This endpoint is for debug and testing purposes only. Give 'idx', 'id' or both, with the status list or the identifier list URI (the URI only selects the list); both must name the same token (else 400). An unknown 'id' is 404 'Unknown identifier'.",
+        "description": "Retrieves the status of a token from the revocation list. WARNING: This endpoint is for debug and testing purposes only. Give 'idx', 'id' or both, with the status list or the identifier list URI (the URI only selects the list); both must name the same token (else 400). An unknown 'id' is 404 'Unknown identifier'. Not authenticated.",
         "parameters": [
           {
             "in": "query",
             "name": "id",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
             },
             "description": "Identifier list id of the token (the 'id' /take returned): an opaque string of at most 64 characters, not the index. Tokens issued before the ids were random have the index as id."
           },
@@ -29,9 +26,10 @@
             "in": "query",
             "name": "idx",
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0
             },
-            "description": "Index of the token in the status list (the 'idx' /take returned)."
+            "description": "Index of the token in the status list (the 'idx' /take returned). A non-negative decimal number without sign, spaces or leading zeros."
           },
           {
             "in": "query",
@@ -40,16 +38,33 @@
               "type": "string",
               "format": "uri"
             },
-            "description": "URL-encoded URI parameter.",
+            "description": "Status list or identifier list URI, exactly as /take returned it.",
             "required": true
           }
         ],
         "responses": {
           "200": {
-            "description": "Successful response containing token status information.",
+            "description": "'0' (valid) or '1' (revoked).",
             "content": {
-              "text/plain": {}
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "0",
+                    "1"
+                  ]
+                }
+              }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
           }
         }
       }
@@ -61,13 +76,7 @@
         "description": "Revokes a token (status 1): sets its bit in the status list and adds its id to the identifier list. Give 'idx', 'id' or both, with the status list or the identifier list URI (the URI only selects the list); both must name the same token (else 400). An unknown 'id' is 404 'Unknown identifier'. A token never handed out by /take is 404 'Unknown entry'.",
         "parameters": [
           {
-            "in": "header",
-            "name": "X-API-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "API key for authentication."
+            "$ref": "#/components/parameters/ApiKey"
           }
         ],
         "requestBody": {
@@ -76,26 +85,78 @@
               "schema": {
                 "type": "object",
                 "anyOf": [
-                  { "required": ["id"] },
-                  { "required": ["idx"] }
+                  {
+                    "required": [
+                      "id"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "idx"
+                    ]
+                  }
                 ],
                 "properties": {
-                  "id": { "type": "string", "description": "Identifier list id of the token (the 'id' /take returned): an opaque string of at most 64 characters, not the index. Tokens issued before the ids were random have the index as id." },
-                  "idx": { "type": "integer", "description": "Index of the token in the status list (the 'idx' /take returned)." },
-                  "status": { "type": "integer", "description": "The new status value for the token." },
-                  "uri": { "type": "string", "description": "URI associated with the token status." }
+                  "id": {
+                    "type": "string",
+                    "description": "Identifier list id of the token (the 'id' /take returned): an opaque string of at most 64 characters, not the index. Tokens issued before the ids were random have the index as id.",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "idx": {
+                    "type": "integer",
+                    "description": "Index of the token in the status list (the 'idx' /take returned). A non-negative decimal number without sign, spaces or leading zeros.",
+                    "minimum": 0
+                  },
+                  "status": {
+                    "type": "integer",
+                    "enum": [
+                      1
+                    ],
+                    "description": "The new status: only 1 (revoked), written exactly as '1'."
+                  },
+                  "uri": {
+                    "type": "string",
+                    "description": "Status list or identifier list URI, exactly as /take returned it."
+                  }
                 },
-                "required": ["status", "uri"]
+                "required": [
+                  "status",
+                  "uri"
+                ]
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Successful response indicating the token status has been updated.",
+            "description": "The token is revoked.",
             "content": {
-              "text/plain": {}
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "Status Changed\n"
+                  ]
+                }
+              }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
           }
         }
       }
@@ -107,13 +168,7 @@
         "description": "Generates a new status structure to be included in a credential as well as a new entry in the attestation status list.",
         "parameters": [
           {
-            "in": "header",
-            "name": "X-API-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "API key for authentication."
+            "$ref": "#/components/parameters/ApiKey"
           }
         ],
         "requestBody": {
@@ -122,21 +177,52 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "country": { "type": "string", "description": "Country code associated with the document." },
-                  "doctype": { "type": "string", "description": "Document type (e.g., eu.europa.ec.eudi.pid.1, org.iso.18013.5.1.mDL)." },
-                  "expiry_date": { "type": "string", "description": "Expiration date of the document in YYYY-MM-DD format." }
+                  "country": {
+                    "type": "string",
+                    "description": "Country code associated with the document."
+                  },
+                  "doctype": {
+                    "type": "string",
+                    "description": "Document type (e.g., eu.europa.ec.eudi.pid.1, org.iso.18013.5.1.mDL)."
+                  },
+                  "expiry_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Expiration date of the document (YYYY-MM-DD, UTC): from today to max_expiry_days (default 3650) ahead."
+                  }
                 },
-                "required": ["country", "doctype", "expiry_date"]
+                "required": [
+                  "country",
+                  "doctype",
+                  "expiry_date"
+                ]
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
             "description": "Successful response containing revocation status information.",
             "content": {
-              "application/json": {}
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusStructure"
+                }
+              }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
           }
         }
       }
@@ -148,13 +234,7 @@
         "description": "As /token_status_list/take, for 'count' credentials of one country, doctype and expiry date. Full lists are followed by new ones, so the items may point to several lists. All indices are taken or none.",
         "parameters": [
           {
-            "in": "header",
-            "name": "X-API-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "API key for authentication."
+            "$ref": "#/components/parameters/ApiKey"
           }
         ],
         "requestBody": {
@@ -164,12 +244,31 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "country": { "type": "string", "description": "Country code associated with the documents." },
-                  "doctype": { "type": "string", "description": "Document type (e.g., eu.europa.ec.eudi.pid.1, org.iso.18013.5.1.mDL)." },
-                  "expiry_date": { "type": "string", "description": "Latest expiration date of the documents in YYYY-MM-DD format." },
-                  "count": { "type": "integer", "minimum": 1, "description": "Number of indices to take, at most batch_max_size (default 1000)." }
+                  "country": {
+                    "type": "string",
+                    "description": "Country code associated with the documents."
+                  },
+                  "doctype": {
+                    "type": "string",
+                    "description": "Document type (e.g., eu.europa.ec.eudi.pid.1, org.iso.18013.5.1.mDL)."
+                  },
+                  "expiry_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Latest expiration date of the documents (YYYY-MM-DD, UTC): from today to max_expiry_days (default 3650) ahead."
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Number of indices to take, at most batch_max_size (default 1000)."
+                  }
                 },
-                "required": ["country", "doctype", "expiry_date", "count"]
+                "required": [
+                  "country",
+                  "doctype",
+                  "expiry_date",
+                  "count"
+                ]
               }
             }
           }
@@ -185,17 +284,7 @@
                     "items": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "properties": {
-                          "status_list": {
-                            "type": "object",
-                            "properties": { "uri": { "type": "string" }, "idx": { "type": "integer" } }
-                          },
-                          "identifier_list": {
-                            "type": "object",
-                            "properties": { "uri": { "type": "string" }, "id": { "type": "string", "description": "Random identifier list id (32 hex characters), unrelated to 'idx'." } }
-                          }
-                        }
+                        "$ref": "#/components/schemas/StatusStructure"
                       }
                     }
                   }
@@ -204,16 +293,16 @@
             }
           },
           "400": {
-            "description": "Invalid field, count below 1 or a body that is not a JSON object.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Wrong or missing API key.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+            "$ref": "#/components/responses/Unauthorized"
           },
           "413": {
-            "description": "count over batch_max_size, or a body over 1 MiB.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+            "$ref": "#/components/responses/TooLarge"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
           }
         }
       }
@@ -225,13 +314,7 @@
         "description": "Revokes (status 1) every entry of 'refs', which may belong to several lists, countries and doctypes. All entries are revoked or none: the error names the first ref that failed (e.g. 'refs[3]: Unknown list'). An entry named twice, through either URI, is revoked once; revoked entries stay revoked.",
         "parameters": [
           {
-            "in": "header",
-            "name": "X-API-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "API key for authentication."
+            "$ref": "#/components/parameters/ApiKey"
           }
         ],
         "requestBody": {
@@ -248,15 +331,43 @@
                     "items": {
                       "type": "object",
                       "properties": {
-                        "uri": { "type": "string", "description": "Status list or identifier list URI returned by /take." },
-                        "idx": { "type": "integer", "description": "Index of the entry in the status list." },
-                        "id": { "type": "string", "description": "Identifier list id of the entry, as /take returned it. With 'idx' too, both must name the same entry." }
+                        "uri": {
+                          "type": "string",
+                          "description": "Status list or identifier list URI returned by /take."
+                        },
+                        "idx": {
+                          "type": "integer",
+                          "description": "Index of the entry in the status list.",
+                          "minimum": 0
+                        },
+                        "id": {
+                          "type": "string",
+                          "description": "Identifier list id of the entry, as /take returned it. With 'idx' too, both must name the same entry.",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
                       },
-                      "required": ["uri"]
+                      "required": [
+                        "uri"
+                      ],
+                      "anyOf": [
+                        {
+                          "required": [
+                            "id"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "idx"
+                          ]
+                        }
+                      ]
                     }
                   }
                 },
-                "required": ["refs"]
+                "required": [
+                  "refs"
+                ]
               }
             }
           }
@@ -268,40 +379,152 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "properties": { "revoked": { "type": "integer", "description": "Number of distinct entries." } }
+                  "properties": {
+                    "revoked": {
+                      "type": "integer",
+                      "description": "Number of distinct entries."
+                    }
+                  }
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid ref, empty refs or a body that is not a JSON object.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Wrong or missing API key.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+            "$ref": "#/components/responses/Unauthorized"
           },
           "404": {
-            "description": "A ref names an unknown list, an unknown 'id' or an index never taken.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+            "$ref": "#/components/responses/NotFound"
           },
           "413": {
-            "description": "More refs than batch_max_size, or a body over 1 MiB.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+            "$ref": "#/components/responses/TooLarge"
           },
           "500": {
-            "description": "A list cannot be read.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+            "$ref": "#/components/responses/ServerError"
           }
         }
       }
     }
   },
   "components": {
+    "parameters": {
+      "ApiKey": {
+        "in": "header",
+        "name": "X-Api-Key",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "API key for authentication."
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Missing or invalid field, or a body that is not a JSON object (batches).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Wrong or missing API key.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Unauthorized"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Unknown list, unknown 'id', or an index never handed out by /take.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "TooLarge": {
+        "description": "A body over 1 MiB, or a batch over batch_max_size (default 1000).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "ServerError": {
+        "description": "A list cannot be read or signed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
     "schemas": {
       "Error": {
         "type": "object",
-        "properties": { "error": { "type": "string" } }
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "Unauthorized": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "enum": [
+              "Unauthorized access"
+            ]
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "StatusStructure": {
+        "type": "object",
+        "properties": {
+          "status_list": {
+            "type": "object",
+            "properties": {
+              "uri": {
+                "type": "string"
+              },
+              "idx": {
+                "type": "integer"
+              }
+            }
+          },
+          "identifier_list": {
+            "type": "object",
+            "properties": {
+              "uri": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string",
+                "description": "Random identifier list id (32 hex characters), unrelated to 'idx'."
+              }
+            }
+          }
+        }
       }
     }
   }

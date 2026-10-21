@@ -150,7 +150,11 @@ server {
 
 ## 6. Upgrading and repairing lists
 
-The lists are renewed (re-signed from their `full_list.json`) at the hours of `renewal.hours`. To do it
+The lists are renewed (re-signed from their `full_list.json`) at the hours of `renewal.hours`. A signed
+list expires `status_list_validity` seconds (default 24 hours) after it was signed, and relying parties
+reject an expired list: keep at least one instance of the service running, so that the lists are
+renewed. The service refuses to start with a key that is not EC P-256, a certificate that does not
+match its key, or an invalid numeric setting. To renew
 at once, for instance after an upgrade, to repair lists damaged by earlier versions (trailing bytes after
 the CWT or the JWT signature, lists that were never renewed):
 

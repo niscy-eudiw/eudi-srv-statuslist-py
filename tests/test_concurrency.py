@@ -194,7 +194,7 @@ def two_processes(tmp_path, signer):
     config.write_text(
         f"service_url: http://lists.test/\napi_key: {API_KEY}\n"
         f"status_list_dir: {tmp_path}/shared/lists\nbackup_dir: {tmp_path}/shared/backup\n"
-        f"logging:\n  path: {tmp_path}/log/sl.log\n"
+        f"logging:\n  path: {tmp_path}/log/sl.log\nmax_expiry_days: 36500\n"
         f"countries:\n  FC:\n    private_key_path: {signer.key_path}\n    certificate_path: {signer.cert_path}\n"
     )
     env = {k: v for k, v in os.environ.items() if k not in ("MOCK_CONFIGURATION", "EUDIW_TEST_ENV")}

@@ -34,13 +34,18 @@ Attributes:
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 import yaml
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = "/etc/statuslist_config/config_statuslist.yaml"
 
@@ -51,6 +56,8 @@ DEFAULTS: dict[str, Any] = {
     "token_status_list_size": 10000,
     "batch_max_size": 1000,
     "status_list_ttl": 3600,
+    "status_list_validity": 86400,
+    "max_expiry_days": 3650,
     "status_list_dir": "/var/opt/status_lists_dev",
     "backup_dir": "/var/opt/status_list_backup_dev",
     "renewal": {"hours": [0, 12]},
@@ -257,7 +264,71 @@ def load_signer(country: str, entry: dict[str, Any]) -> None:
         )
     except (OSError, ValueError) as e:
         raise RuntimeError(f"Cannot load the certificate of country {country}: {cert_path}: {e}") from e
+    _check_signer(country, entry["private_key"], cert)
     entry["certificate"] = cert.public_bytes(serialization.Encoding.DER)
+
+
+def _check_signer(country: str, private_key: Any, cert: x509.Certificate) -> None:
+    """Makes sure the lists of ``country`` can be signed (ES256) and verified.
+
+    No extended key usage is required: the ``id-kp-oauthStatusSigning`` OID
+    of draft-ietf-oauth-status-list-12 section 10 is not assigned yet.
+
+    Raises:
+        RuntimeError: The key is not EC P-256, or the certificate is not the
+            key's (verifiers would reject every list).
+    """
+    if not isinstance(private_key, ec.EllipticCurvePrivateKey) or not isinstance(private_key.curve, ec.SECP256R1):
+        raise RuntimeError(f"The private key of country {country} must be an EC P-256 key (ES256)")
+    public = serialization.PublicFormat.SubjectPublicKeyInfo
+    if private_key.public_key().public_bytes(serialization.Encoding.DER, public) != cert.public_key().public_bytes(
+        serialization.Encoding.DER, public
+    ):
+        raise RuntimeError(f"The certificate of country {country} does not match its private key")
+    now = datetime.now(timezone.utc)
+    if not cert.not_valid_before_utc <= now <= cert.not_valid_after_utc:
+        logger.warning(
+            "The certificate of country %s is not valid now (%s to %s)",
+            country, cert.not_valid_before_utc, cert.not_valid_after_utc,
+        )
+
+
+def _positive_int(config: dict[str, Any], name: str) -> int:
+    value = config.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise RuntimeError(f"Config '{name}' must be a positive integer")
+    return value
+
+
+def longest_renewal_gap(hours: list[int]) -> int:
+    """Longest time between two renewals, in hours (across midnight too)."""
+    hours = sorted(hours)
+    return max(b - a for a, b in zip(hours, hours[1:] + [hours[0] + 24]))
+
+
+def check_settings(config: dict[str, Any]) -> None:
+    """Checks the numeric settings, so that a bad value stops the service at start-up.
+
+    Raises:
+        RuntimeError: A setting out of range, named in the message.
+    """
+    for name in ("token_status_list_size", "status_list_ttl", "batch_max_size", "max_expiry_days"):
+        _positive_int(config, name)
+    hours = config["renewal"].get("hours") if isinstance(config["renewal"], dict) else None
+    if (
+        not isinstance(hours, list)
+        or not hours
+        or len(set(hours)) != len(hours)
+        or not all(isinstance(h, int) and not isinstance(h, bool) and 0 <= h <= 23 for h in hours)
+    ):
+        raise RuntimeError("Config 'renewal.hours' must list distinct hours from 0 to 23")
+    # The published lists must outlive a missed renewal.
+    minimum = (longest_renewal_gap(hours) + 1) * 3600
+    if _positive_int(config, "status_list_validity") <= minimum:
+        raise RuntimeError(
+            f"Config 'status_list_validity' must be more than {minimum} seconds "
+            "(the longest time between renewals plus one hour)"
+        )
 
 
 def process_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -270,9 +341,10 @@ def process_config(config: dict[str, Any]) -> dict[str, Any]:
         The same ``config`` object, for convenience.
 
     Raises:
-        RuntimeError: If ``countries`` is missing or empty, or a country's
-            key material cannot be loaded.
+        RuntimeError: If ``countries`` is missing or empty, a country's
+            key material cannot be loaded, or a numeric setting is invalid.
     """
+    check_settings(config)
     countries = config.get("countries")
     if not isinstance(countries, dict) or not countries:
         raise RuntimeError("Config section 'countries' must map at least one country to its signer")

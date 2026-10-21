@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import time
 import zlib
 
 import cbor2
@@ -32,7 +33,7 @@ def verify_cose_sign1(encoded: bytes, public_key) -> tuple[dict, dict]:
     tagged = strict_cbor(encoded)
     assert tagged.tag == 18
     protected, unprotected, payload, signature = tagged.value
-    assert unprotected == {4: b"1"}
+    assert unprotected == {}  # x5chain identifies the key, no kid
     sig_structure = cbor2.dumps(["Signature1", protected, b"", payload])
     der = encode_dss_signature(int.from_bytes(signature[:32], "big"), int.from_bytes(signature[32:], "big"))
     public_key.verify(der, sig_structure, ec.ECDSA(hashes.SHA256()))
@@ -54,7 +55,8 @@ def test_signer_returns_the_loaded_material(signer):
     assert key.public_key().public_numbers() == signer.private_key.public_key().public_numbers()
 
 
-def test_status_list_jwt(signer, status_list):
+def test_status_list_jwt(signer, configuration, status_list):
+    configuration.update(status_list_ttl=600, status_list_validity=90000)
     token = jwt_format(status_list, "FC", URL)
     header = jwt.get_unverified_header(token)
     assert header["typ"] == "statuslist+jwt"
@@ -63,18 +65,22 @@ def test_status_list_jwt(signer, status_list):
 
     claims = jwt.decode(token, signer.private_key.public_key(), algorithms=["ES256"])
     assert claims["sub"] == URL
+    assert claims["exp"] == claims["iat"] + 90000
+    assert claims["ttl"] == 600
+    assert abs(claims["iat"] - time.time()) < 60
     assert claims["status_list"]["bits"] == 1
     bits = zlib.decompress(b64url_decode(claims["status_list"]["lst"]))
     assert bits[0] == 0b00001000
 
 
 def test_status_list_cwt(signer, configuration, status_list):
-    configuration["status_list_ttl"] = 600
+    configuration.update(status_list_ttl=600, status_list_validity=90000)
     protected, claims = verify_cose_sign1(cwt_format(status_list, "FC", URL), signer.private_key.public_key())
     assert protected[1] == -7
     assert protected[16] == "application/statuslist+cwt"
     assert protected[33] == signer.certificate.public_bytes(serialization.Encoding.DER)
     assert claims[2] == URL
+    assert claims[4] == claims[6] + 90000
     assert claims[65534] == 600
     assert claims[65533]["bits"] == 1
     assert zlib.decompress(claims[65533]["lst"])[0] == 0b00001000
@@ -85,6 +91,7 @@ def test_identifier_list_jwt(signer):
     assert jwt.get_unverified_header(token)["typ"] == "application/identifierlist+jwt"
     claims = jwt.decode(token, signer.private_key.public_key(), algorithms=["ES256"])
     assert claims["iss"] == "https://statuslist.test"
+    assert claims["exp"] == claims["iat"] + 86400
     assert claims["identifier_list"] == {"identifiers": {"5": {}}}
 
 
@@ -96,6 +103,8 @@ def test_identifier_list_cwt(signer):
     assert protected[16] == "application/identifierlist+cwt"
     assert claims[1] == "https://statuslist.test"
     assert claims[2] == URL
+    assert claims[4] == claims[6] + 86400
+    assert claims[65534] == 3600
     assert claims[65530] == {"identifiers": {b"5": {}}}
 
 

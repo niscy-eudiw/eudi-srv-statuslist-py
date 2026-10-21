@@ -166,3 +166,40 @@ def test_mock_config():
 def test_detect_test_env(monkeypatch, value, expected):
     monkeypatch.setenv(app_config.TEST_ENV_VARIABLE, value)
     assert app_config._detect_test_env() is expected
+
+
+class TestCheckSettings:
+    @pytest.mark.parametrize(
+        "setting",
+        [
+            {"status_list_ttl": True},
+            {"max_expiry_days": 0},
+            {"status_list_validity": "1d"},
+            {"status_list_validity": 13 * 3600},  # 12 h between [0, 12] renewals + 1 h
+            {"renewal": {"hours": [6, 6]}},
+            {"renewal": {"hours": [1.5]}},
+            {"renewal": {"hours": "0,12"}},
+            {"token_status_list_size": -8},
+        ],
+    )
+    def test_invalid(self, setting):
+        with pytest.raises(RuntimeError, match="Config '"):
+            app_config.check_settings(apply_defaults(setting))
+
+    def test_validity_follows_the_renewal_hours(self):
+        app_config.check_settings(apply_defaults({"status_list_validity": 13 * 3600 + 1}))
+        with pytest.raises(RuntimeError, match="status_list_validity"):
+            app_config.check_settings(apply_defaults({"renewal": {"hours": [3]}}))  # 24 h gap
+        app_config.check_settings(apply_defaults({"renewal": {"hours": [3]}, "status_list_validity": 25 * 3600 + 1}))
+
+    @pytest.mark.parametrize("hours,gap", [([0, 12], 12), ([3], 24), ([22, 2, 10], 12), ([0, 1, 23], 22)])
+    def test_longest_renewal_gap(self, hours, gap):
+        assert app_config.longest_renewal_gap(hours) == gap
+
+
+def test_expired_certificate_is_only_a_warning(tmp_path, caplog):
+    signer = make_signer(tmp_path, "old", expired=True)
+    entry = {"private_key_path": str(signer.key_path), "certificate_path": str(signer.cert_path)}
+    app_config.load_signer("XX", entry)
+    assert entry["certificate"]
+    assert "The certificate of country XX is not valid now" in caplog.text

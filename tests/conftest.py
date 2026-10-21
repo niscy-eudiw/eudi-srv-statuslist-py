@@ -35,6 +35,8 @@ def configuration(monkeypatch, tmp_path, signer):
             "status_list_dir": str(tmp_path / "lists"),
             "backup_dir": str(tmp_path / "backup"),
             "logging": {"path": str(tmp_path / "log" / "status_lists.log")},
+            # Most tests take indices expiring in 2099.
+            "max_expiry_days": 36500,
             "countries": {
                 cc: {"private_key_path": str(signer.key_path), "certificate_path": str(signer.cert_path)}
                 for cc in ("FC", "LU")

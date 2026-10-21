@@ -22,7 +22,7 @@ import cbor2
 import jwt
 
 from app.config import CONFIGURATION
-from app.status_list_format import cose_es256_sign, signer
+from app.status_list_format import cose_es256_sign, signer, validity
 
 
 def identifier_list_jwt_format(
@@ -42,11 +42,12 @@ def identifier_list_jwt_format(
 
     _cert_b64 = base64.b64encode(_cert).decode()
 
+    issued_at = int(time.time())
     payload = {
         "iss": CONFIGURATION["service_url"].rstrip("/"),
         "sub": list_url,
-        "iat": int(time.time()),
-        # "exp": datetime.now() + timedelta(days=1),
+        "iat": issued_at,
+        **validity(issued_at),
         "identifier_list": identifier_list,
     }
 
@@ -72,7 +73,8 @@ def identifier_list_cwt_format(
 
     private_key, _cert = signer(country)
 
-    unprotected = {4: b"1"}
+    # x5chain (33) identifies the key; no kid.
+    unprotected = {}
     protected = {1: -7, 16: "application/identifierlist+cwt", 33: _cert}
 
     # Identifiers are byte strings in the CWT; the caller's dict is left as is.
@@ -84,11 +86,14 @@ def identifier_list_cwt_format(
         },
     }
 
+    issued_at = int(time.time())
+    times = validity(issued_at)
     claims = {
         1: CONFIGURATION["service_url"].rstrip("/"),
         2: list_url,
-        6: int(time.time()),
-        # 4: int((datetime.now() + timedelta(days=1)).timestamp()),
+        4: times["exp"],
+        6: issued_at,
+        65534: times["ttl"],
         65530: encoded,
     }
 

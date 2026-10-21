@@ -139,9 +139,13 @@ class BitArray:
 class RandomIndexAllocator:
     """Hands out the free indices of a list in random order.
 
-    Random indices keep a Relying Party from telling how many credentials
-    were issued, or in which order (draft section 13.2).
+    Every free index is equally likely to be taken next, so the indices keep
+    a Relying Party from telling how many credentials were issued, or in
+    which order (draft-12 section 12.5.1).
     """
+
+    #: Random positions tried before the free indices are listed.
+    PROBES = 32
 
     def __init__(self, allocated: BitArray):
         if allocated.bits != 1:
@@ -155,23 +159,25 @@ class RandomIndexAllocator:
         return self.allocated.size
 
     def take(self) -> int:
-        """Takes a free index at random.
+        """Takes a free index, uniformly at random among the free ones.
+
+        Random positions are tried first; a nearly full list falls back to
+        choosing among its free indices listed.
 
         Raises:
             NoMoreIndices: Every index is taken.
         """
-        lst = self.allocated.lst
         if self.num_allocated >= self.size:
             raise NoMoreIndices("All indices are allocated")
-        # From a random byte, the first one (circularly) with a free bit.
-        start = secrets.randbelow(len(lst))
-        for offset in range(len(lst)):
-            byte = (start + offset) % len(lst)
-            if lst[byte] != 0xFF:
+        for _ in range(self.PROBES):
+            index = secrets.randbelow(self.size)
+            if not self.allocated.get(index):
                 break
-        else:  # pragma: no cover - num_allocated is counted from the bits
-            raise NoMoreIndices("All indices are allocated")
-        index = secrets.choice([byte * 8 + bit for bit in range(8) if not lst[byte] >> bit & 1])
+        else:
+            lst = self.allocated.lst
+            index = secrets.choice(
+                [i for i in range(self.size) if not lst[i >> 3] >> (i & 7) & 1]
+            )
         self.allocated.set(index, 1)
         self.num_allocated += 1
         return index

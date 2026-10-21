@@ -118,6 +118,27 @@ def test_allocator_counts_taken_indices_itself():
         allocator.take()
 
 
+def test_allocator_picks_uniformly_among_free_indices():
+    """A run of taken indices does not favour the free index after it (draft-12 section 12.5.1)."""
+    allocated = BitArray.with_at_least(1, 64)
+    for index in range(32):
+        allocated.set(index, 1)
+    counts = dict.fromkeys(range(32, 64), 0)
+    for _ in range(4000):
+        counts[RandomIndexAllocator(BitArray(1, allocated.lst)).take()] += 1
+    assert set(counts) == set(range(32, 64))
+    assert 60 < min(counts.values()) and max(counts.values()) < 200  # 125 expected each
+
+
+def test_allocator_lists_the_free_indices_when_probes_miss(monkeypatch):
+    monkeypatch.setattr(RandomIndexAllocator, "PROBES", 0)
+    allocated = BitArray.with_at_least(1, 1024)
+    for index in range(1024):
+        if index != 517:
+            allocated.set(index, 1)
+    assert RandomIndexAllocator(allocated).take() == 517
+
+
 def test_allocator_needs_one_bit_entries():
     with pytest.raises(ValueError):
         RandomIndexAllocator(BitArray.with_at_least(2, 8))

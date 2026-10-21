@@ -18,10 +18,9 @@
 import hmac
 import logging
 import re
-from datetime import datetime
-from urllib.parse import unquote
+from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, jsonify, request, send_from_directory
+from flask import Blueprint, Response, jsonify, request, send_from_directory
 
 from app import list_management
 from app.config import CONFIGURATION
@@ -32,17 +31,21 @@ from app.storage import LIST_KINDS, CorruptList, ListNotFound
 token = Blueprint("token_status_list", __name__, url_prefix="/token_status_list")
 logger = logging.getLogger(__name__)
 
-_LIST_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_LIST_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+#: A non-negative decimal number as written by the issuer: ASCII digits, no
+#: sign, spaces or leading zeros.
+_NUMBER = re.compile(r"0|[1-9][0-9]*")
 
 
 #: Longest identifier list ``id`` accepted (the service hands out 32 characters).
 MAX_IDENTIFIER = 64
 
-#: Largest body of a batch request, in bytes.
-MAX_BATCH_BODY = 1024 * 1024
+#: Largest request body, in bytes (``MAX_CONTENT_LENGTH``, 413 beyond it).
+MAX_BODY = 1024 * 1024
 
-#: Error answered (401) when ``X-Api-Key`` is missing or wrong.
-INCORRECT_API_KEY = "Incorrect API key"
+#: Message answered (401) when ``X-Api-Key`` is missing or wrong.
+UNAUTHORIZED = "Unauthorized access"
 
 
 class BadRequest(ValueError):
@@ -62,6 +65,25 @@ def api_key_valid() -> bool:
     return hmac.compare_digest(sent.encode(), CONFIGURATION["api_key"].encode())
 
 
+def _unauthorized():
+    """Logs a failed ``X-Api-Key`` check and answers 401."""
+    logger.warning("%s: %s %s", UNAUTHORIZED, request.method, request.path)
+    return jsonify({"message": UNAUTHORIZED}), 401
+
+
+def _form():
+    """The request form; a malformed body (bad chunked framing) is a :class:`BadRequest`."""
+    try:
+        return request.form
+    except OSError as e:
+        raise BadRequest("Malformed request body") from e
+
+
+def _text(body: str) -> Response:
+    """A plain-text success body (``0`` / ``1``, ``Status Changed``)."""
+    return Response(body, mimetype="text/plain")
+
+
 def validate_doctype(user_input):
     """Validate doctype and return the allowed value"""
     if user_input not in CONFIGURATION["allowed_doctypes"]:
@@ -79,14 +101,21 @@ def validate_country(user_input):
 
 
 def validate_expiry_date(user_input):
-    """Validate and sanitize expiry date"""
+    """Validate and sanitize expiry date
+
+    Dates are UTC days: today is accepted (the credential is valid until the
+    end of the day), and so is any day up to ``max_expiry_days`` from today.
+    """
     try:
         parsed_date = datetime.strptime(user_input, "%Y-%m-%d")
     except (ValueError, TypeError):
         raise ValueError("Invalid expiry date format. Use YYYY-MM-DD.")
 
-    if parsed_date.date() < datetime.now().date():
+    today = datetime.now(timezone.utc).date()
+    if parsed_date.date() < today:
         raise ValueError("Expiry date must be in the future.")
+    if parsed_date.date() > today + timedelta(days=CONFIGURATION["max_expiry_days"]):
+        raise ValueError(f"Expiry date must be at most {CONFIGURATION['max_expiry_days']} days from today.")
 
     # Return clean date string from parsed date
     return parsed_date.strftime("%Y-%m-%d")
@@ -96,7 +125,8 @@ def parse_list_uri(uri) -> tuple[str, str, str, str]:
     """Splits a list URI handed out by this service.
 
     It must be ``<service_url><kind>/<CC>/<doctype>/<id>``: a configured
-    country, an allowed doctype and a list id, nothing else.
+    country, an allowed doctype and a list id, nothing else, spelled as
+    ``/take`` handed it out (no percent-encoding).
 
     Returns:
         ``(kind, country, doctype, list_id)``.
@@ -107,8 +137,8 @@ def parse_list_uri(uri) -> tuple[str, str, str, str]:
     prefix = CONFIGURATION["service_url"]
     if not isinstance(uri, str) or not uri.startswith(prefix) or "?" in uri or "#" in uri:
         raise BadRequest("uri is not a list of this service")
-    parts = [unquote(part) for part in uri[len(prefix):].split("/")]
-    if len(parts) != 4 or parts[0] not in LIST_KINDS or not _LIST_ID.match(parts[3]):
+    parts = uri[len(prefix):].split("/")
+    if len(parts) != 4 or parts[0] not in LIST_KINDS or not _LIST_ID.fullmatch(parts[3]):
         raise BadRequest("uri is not a list of this service")
     kind, country, doctype, list_id = parts
     try:
@@ -117,14 +147,20 @@ def parse_list_uri(uri) -> tuple[str, str, str, str]:
         raise BadRequest(str(e)) from e
 
 
+def parse_number(value) -> int | None:
+    """A non-negative integer: a JSON integer or a canonical decimal string, else ``None``."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value if value >= 0 else None
+    if isinstance(value, str) and _NUMBER.fullmatch(value):
+        return int(value)
+    return None
+
+
 def parse_index(value) -> int:
     """A non-negative integer index (the upper bound is checked against the list)."""
-    try:
-        index = int(value)
-    except (TypeError, ValueError):
-        raise BadRequest("'id' or 'idx' unkown") from None
-    if index < 0:
-        raise BadRequest("index must not be negative")
+    index = parse_number(value)
+    if index is None:
+        raise BadRequest("'idx' must be a non-negative integer")
     return index
 
 
@@ -158,11 +194,15 @@ def _form_pointer(values) -> tuple[int | None, str | None]:
 
 
 def _batch_body() -> dict:
-    """The JSON object of a batch request (at most :data:`MAX_BATCH_BODY` bytes, else 413)."""
+    """The JSON object of a batch request (at most :data:`MAX_BODY` bytes, else 413)."""
     if not request.is_json:
         raise BadRequest("Content-Type must be application/json")
-    request.max_content_length = MAX_BATCH_BODY
-    body = request.get_json(silent=True)
+    try:
+        body = request.get_json(silent=True)
+    except RecursionError:
+        body = None
+    except OSError as e:
+        raise BadRequest("Malformed request body") from e
     if not isinstance(body, dict):
         raise BadRequest("body must be a JSON object")
     return body
@@ -194,15 +234,14 @@ def _take_fields(values) -> tuple[str, str, str]:
 
 @token.route("/take", methods=["POST"])
 def take_index():
-
-    logger.info("Take request, payload: %s", safe(request.form.to_dict()))
-
+    # The key is checked before the body is read.
     if not api_key_valid():
-        logger.error(INCORRECT_API_KEY)
-        return _error(INCORRECT_API_KEY, 401)
+        return _unauthorized()
 
     try:
-        doctype, country, expiry_date = _take_fields(request.form)
+        form = _form()
+        logger.info("Take request, payload: %s", safe(form.to_dict()))
+        doctype, country, expiry_date = _take_fields(form)
     except ValueError as e:
         logger.warning(str(e))
         return _error(str(e), 400)
@@ -216,8 +255,7 @@ def take_index():
 def take_batch():
     """Takes ``count`` indices of one country, doctype and expiry date (JSON body)."""
     if not api_key_valid():
-        logger.error(INCORRECT_API_KEY)
-        return _error(INCORRECT_API_KEY, 401)
+        return _unauthorized()
 
     try:
         body = _batch_body()
@@ -250,7 +288,7 @@ def get_index():
     try:
         index, identifier = _form_pointer(request.args)
         kind, country, doctype, list_id = parse_list_uri(uri)
-        return str(list_management.read_status(kind, country, doctype, list_id, index, identifier))
+        return _text(str(list_management.read_status(kind, country, doctype, list_id, index, identifier)))
     except (BadRequest, *REF_ERRORS) as e:
         message, status = _entry_error(e)
         if status == 500:
@@ -261,20 +299,21 @@ def get_index():
 @token.route("/set", methods=["POST"])
 def set_index():
     if not api_key_valid():
-        return jsonify({"message": "Unauthorized access"}), 401
+        return _unauthorized()
 
-    uri = request.form.get("uri")
-    status = request.form.get("status")
-    if uri is None or not (request.form.get("id") or request.form.get("idx")) or status is None:
+    try:
+        form = _form()
+    except BadRequest as e:
+        return _error(str(e), 400)
+    uri = form.get("uri")
+    status = form.get("status")
+    if uri is None or not (form.get("id") or form.get("idx")) or status is None:
         return _error("Missing URI/index/status", 400)
 
     try:
-        index, identifier = _form_pointer(request.form)
-        try:
-            status = int(status)
-        except ValueError:
-            return _error(" status unkown", 400)
-        if status != 1:
+        index, identifier = _form_pointer(form)
+        # Only revocation (1) is supported, written exactly as "1".
+        if status != "1":
             return _error("Wrong Status Change", 400)
         # Either URI of a list (token or identifier list) names the same entries.
         _, country, doctype, list_id = parse_list_uri(uri)
@@ -287,7 +326,7 @@ def set_index():
             logger.warning(message)
         return _error(message, status)
 
-    return "Status Changed\n"
+    return _text("Status Changed\n")
 
 
 def _parse_ref(ref) -> Ref:
@@ -298,8 +337,6 @@ def _parse_ref(ref) -> Ref:
     if uri is None or (index is None and identifier is None):
         raise BadRequest("Missing URI or idx/id")
     if index is not None:
-        if isinstance(index, bool) or not isinstance(index, (int, str)):
-            raise BadRequest("'id' or 'idx' unkown")
         index = parse_index(index)
     if identifier is not None:
         identifier = parse_identifier(identifier)
@@ -312,7 +349,7 @@ def _parse_ref(ref) -> Ref:
 def set_batch():
     """Revokes every entry of ``refs``, all or none (JSON body)."""
     if not api_key_valid():
-        return _error(INCORRECT_API_KEY, 401)
+        return _unauthorized()
 
     try:
         refs = _batch_body().get("refs")
