@@ -153,7 +153,8 @@ def atomic_write(path: Path, data: bytes | str, mode: int = PRIVATE_MODE) -> Non
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(raw)
-        os.chmod(tmp, mode)  # NOSONAR: other users may read only the published lists (PUBLISHED_MODE)
+        # Other users may read only the published lists (PUBLISHED_MODE).
+        os.chmod(tmp, mode)  # NOSONAR
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):
