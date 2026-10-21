@@ -10,7 +10,7 @@ import pytest
 
 from app import list_management as lm
 from app import storage
-from app.storage import IDENTIFIER_LIST, TOKEN_LIST, CorruptList, ListNotFound
+from app.storage import FULL_LIST, IDENTIFIER_LIST, TOKEN_LIST, CorruptList, ListNotFound
 from tests.conftest import MDL, PID
 from tests.strict import check_list_files, jwt_status
 
@@ -30,13 +30,24 @@ class TestTake:
         list_id, idx = ref(info)
         token_dir, identifier_dir = dirs("FC", PID, list_id)
         check_list_files(token_dir, identifier_dir)
-        stored = json.loads((token_dir / "full_list.json").read_text())
+        stored = json.loads((token_dir / FULL_LIST).read_text())
         # issue 4: the URIs are in the very first dump
         assert stored["status_list_uri"] == info["status_list"]["uri"]
         assert stored["identifier_list_uri"] == info["identifier_list"]["uri"]
         assert stored["expires"] == "2099-01-01"
         assert info["identifier_list"]["id"] == str(idx)
         assert storage.current_list_id("FC", PID) == list_id
+
+    def test_only_the_published_files_are_world_readable(self, configuration):
+        token_dir, identifier_dir = dirs("FC", PID, ref(lm.take("FC", PID, "2099-01-01"))[0])
+        published = {token_dir: {"token_status_list.jwt", "token_status_list.cwt"},
+                     identifier_dir: {"identifier_list.cwt"}}
+        for directory, names in published.items():
+            for f in directory.iterdir():
+                expected = storage.PUBLISHED_MODE if f.name in names else storage.PRIVATE_MODE
+                assert oct(f.stat().st_mode & 0o777) == oct(expected), f
+        current = storage.state_dir("FC", PID) / "current.json"
+        assert oct(current.stat().st_mode & 0o777) == oct(storage.PRIVATE_MODE)
 
     def test_take_on_an_existing_list_does_not_resign(self):
         """Taking an index changes no status: the published files stay as they are."""
@@ -88,7 +99,7 @@ class TestTake:
 
     def test_unreadable_current_list_starts_a_new_one(self):
         list_id, _ = ref(lm.take("FC", PID, "2099-01-01"))
-        (dirs("FC", PID, list_id)[0] / "full_list.json").write_text("{broken")
+        (dirs("FC", PID, list_id)[0] / FULL_LIST).write_text("{broken")
         assert ref(lm.take("FC", PID, "2099-01-01"))[0] != list_id
 
     def test_pointer_to_a_removed_list(self):
@@ -145,7 +156,7 @@ class TestRevoke:
 
     def test_corrupt_list(self):
         list_id, idx = ref(lm.take("FC", PID, "2099-01-01"))
-        (dirs("FC", PID, list_id)[0] / "full_list.json").write_text('{"token_status_list": 1}')
+        (dirs("FC", PID, list_id)[0] / FULL_LIST).write_text('{"token_status_list": 1}')
         with pytest.raises(CorruptList):
             lm.revoke("FC", PID, list_id, idx)
 
@@ -161,7 +172,7 @@ class TestStorage:
         storage.atomic_write(target, b"longer content")
         storage.atomic_write(target, "short")
         assert target.read_bytes() == b"short"  # issue 7: no tail of the longer file
-        assert oct(target.stat().st_mode & 0o777) == oct(storage.FILE_MODE)
+        assert oct(target.stat().st_mode & 0o777) == oct(storage.PRIVATE_MODE)
         assert [p.name for p in target.parent.iterdir()] == ["file"]
 
     def test_atomic_write_failure_keeps_the_old_file(self, tmp_path, monkeypatch):
@@ -195,7 +206,7 @@ class TestStorage:
     def test_old_lists_without_uris_get_them(self):
         """Lists written by the first dump of older versions had no URIs."""
         list_id, _ = ref(lm.take("FC", PID, "2099-01-01"))
-        path = dirs("FC", PID, list_id)[0] / "full_list.json"
+        path = dirs("FC", PID, list_id)[0] / FULL_LIST
         data = json.loads(path.read_text())
         del data["status_list_uri"], data["identifier_list_uri"]
         data["identifier_list"]["identifiers"] = {"7": {}}

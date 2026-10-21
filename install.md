@@ -106,7 +106,7 @@ docker build -t eudi-srv-statuslist-py .
    Inside the container, the default `status_list_dir`, `backup_dir` and `logging.path` are the mounted directories.
 2. Put the signing keys and certificates where the `countries` paths point (`/etc/eudiw/...`); they are mounted read-only.
 3. Create the list, backup and log directories and give them to the container user:
-   `sudo mkdir -p /var/opt/status_lists_dev /var/opt/status_list_backup_dev /tmp/status_lists_dev && sudo chown -R 10001 /var/opt/status_lists_dev /var/opt/status_list_backup_dev /tmp/status_lists_dev`.
+   `sudo mkdir -p /var/opt/status_lists_dev /var/opt/status_list_backup_dev /var/log/status_lists_dev && sudo chown -R 10001 /var/opt/status_lists_dev /var/opt/status_list_backup_dev /var/log/status_lists_dev`.
 4. Serve `status_list_dir` with the web server in front of the service (nginx), under `service_url`:
    the service writes the signed lists there, but does not serve them (see "Serving the lists" below).
 

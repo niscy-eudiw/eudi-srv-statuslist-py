@@ -19,7 +19,6 @@
 
 import click
 from flask import Flask, jsonify
-from flask_cors import CORS
 from flask_swagger_ui import get_swaggerui_blueprint
 from werkzeug.exceptions import HTTPException
 
@@ -59,7 +58,6 @@ def create_app():
         several processes may serve the same ``status_list_dir``.
     """
     app = Flask(__name__)
-    CORS(app)
     app.debug = bool(CONFIGURATION["debug"])
 
     configure_logging(app, CONFIGURATION["logging"])

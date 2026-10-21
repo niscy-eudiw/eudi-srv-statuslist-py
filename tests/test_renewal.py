@@ -10,7 +10,7 @@ import pytest
 
 from app import list_management as lm
 from app import lists_renewal, storage
-from app.storage import IDENTIFIER_LIST, TOKEN_LIST
+from app.storage import FULL_LIST, IDENTIFIER_LIST, TOKEN_LIST
 from tests.conftest import MDL, PID
 from tests.strict import check_list_files, jwt_status
 
@@ -27,7 +27,7 @@ def dirs(list_id, doctype=PID):
 
 def expire(list_id):
     for d in dirs(list_id):
-        path = d / "full_list.json"
+        path = d / FULL_LIST
         data = json.loads(path.read_text())
         data["expires"] = "2000-01-01"
         path.write_text(json.dumps(data))
@@ -73,9 +73,9 @@ class TestRenewLists:
         (stamp,) = os.listdir(configuration["backup_dir"])
         backup = os.path.join(configuration["backup_dir"], stamp)
         assert sorted(os.listdir(os.path.join(backup, TOKEN_LIST, "FC", PID, list_id))) == [
-            "full_list.json", "token_status_list.cwt", "token_status_list.jwt"]
+            FULL_LIST, "token_status_list.cwt", "token_status_list.jwt"]
         assert sorted(os.listdir(os.path.join(backup, IDENTIFIER_LIST, "FC", PID, list_id))) == [
-            "full_list.json", "identifier_list.cwt"]
+            FULL_LIST, "identifier_list.cwt"]
         assert open(os.path.join(backup, TOKEN_LIST, "FC", PID, list_id, "token_status_list.jwt")).read() == old_jwt
 
     def test_list_with_one_index_is_renewed(self):
@@ -122,10 +122,10 @@ class TestRenewLists:
         bad, _ = make_list()
         storage.set_current_list_id("FC", PID, None)
         good, _ = make_list()
-        (dirs(bad)[0] / "full_list.json").write_text("{not json")
+        (dirs(bad)[0] / FULL_LIST).write_text("{not json")
         unknown = storage.list_dir(TOKEN_LIST, "XX", PID, "11111111-1111-1111-1111-111111111111")
         unknown.mkdir(parents=True)
-        (unknown / "full_list.json").write_text((dirs(good)[0] / "full_list.json").read_text())
+        (unknown / FULL_LIST).write_text((dirs(good)[0] / FULL_LIST).read_text())
 
         report = lists_renewal.renew_lists()
 
@@ -164,7 +164,7 @@ class TestCommand:
 
     def test_renew_lists_command_reports_corrupt_lists(self, client):
         list_id, _ = make_list()
-        (dirs(list_id)[0] / "full_list.json").write_text("{")
+        (dirs(list_id)[0] / FULL_LIST).write_text("{")
         result = client.application.test_cli_runner().invoke(args=["renew-lists"])
         assert result.exit_code == 1
         assert f"FC/{PID}/{list_id}" in result.output

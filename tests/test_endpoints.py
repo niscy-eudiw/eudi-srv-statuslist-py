@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from app.storage import FULL_LIST
 from tests.conftest import MDL, PID
 
 FUTURE = (date.today() + timedelta(days=365)).isoformat()
@@ -45,7 +46,7 @@ class TestTake:
     def test_writes_signed_lists(self, client, headers, configuration):
         uri = take(client, headers).json["status_list"]["uri"]
         directory = configuration["status_list_dir"] + urlparse(uri).path
-        assert sorted(os.listdir(directory)) == ["full_list.json", "token_status_list.cwt", "token_status_list.jwt"]
+        assert sorted(os.listdir(directory)) == [FULL_LIST, "token_status_list.cwt", "token_status_list.jwt"]
 
     def test_same_list_for_same_country_and_doctype(self, client, headers):
         first = take(client, headers).json["status_list"]
@@ -152,7 +153,7 @@ class TestGet:
     def test_uri_cannot_leave_status_list_dir(self, client, configuration, tmp_path):
         outside = tmp_path / "outside"
         outside.mkdir()
-        (outside / "full_list.json").write_text(json.dumps({"token_status_list": None, "identifier_list": {"1": 1}}))
+        (outside / FULL_LIST).write_text(json.dumps({"token_status_list": None, "identifier_list": {"1": 1}}))
         response = get(client, "https://statuslist.test/identifier_list/../../outside", 1)
         assert response.status_code in (400, 404)
 

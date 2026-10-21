@@ -54,7 +54,7 @@ DEFAULTS: dict[str, Any] = {
     "backup_dir": "/var/opt/status_list_backup_dev",
     "renewal": {"hours": [0, 12]},
     "logging": {
-        "path": "/tmp/status_lists_dev/status_lists.log",
+        "path": "/var/log/status_lists_dev/status_lists.log",
         "log_level": "INFO",
         "backup_count": 7,
     },
@@ -98,7 +98,7 @@ DEFAULTS: dict[str, Any] = {
 }
 
 #: ``${name}`` placeholder of a value defined in the ``variables`` section.
-_PLACEHOLDER = re.compile(r"\$\{([A-Za-z0-9_]+)\}")
+_PLACEHOLDER = re.compile(r"\$\{(\w+)\}", re.ASCII)
 
 
 def _substitute(text: str, variables: dict[str, str]) -> str:

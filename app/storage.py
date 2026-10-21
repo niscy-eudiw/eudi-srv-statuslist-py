@@ -51,8 +51,13 @@ TOKEN_LIST = "token_status_list"
 IDENTIFIER_LIST = "identifier_list"
 LIST_KINDS = (TOKEN_LIST, IDENTIFIER_LIST)
 
-#: Mode of the published files (nginx reads them as another user).
-FILE_MODE = 0o644
+#: Name of the file holding a list's state (never served).
+FULL_LIST = "full_list.json"
+
+#: Mode of the published JWT / CWT files (nginx reads them as another user).
+PUBLISHED_MODE = 0o644
+#: Mode of every other file: the list state, ``state/`` and the backups.
+PRIVATE_MODE = 0o600
 
 
 class ListNotFound(LookupError):
@@ -127,7 +132,7 @@ def country_doctype_lock(country: str, doctype: str) -> Iterator[None]:
         yield
 
 
-def atomic_write(path: Path, data: bytes | str) -> None:
+def atomic_write(path: Path, data: bytes | str, mode: int = PRIVATE_MODE) -> None:
     """Replaces ``path`` with ``data`` in one step.
 
     The data goes to a temporary file in the same directory, which is then
@@ -135,6 +140,12 @@ def atomic_write(path: Path, data: bytes | str) -> None:
     partial one, and a failure leaves the old file in place. There is no
     ``fsync`` (it made ``/take`` 60 times slower): after a power cut the
     latest write may be lost, never half written.
+
+    Args:
+        path: File to replace.
+        data: New content.
+        mode: Permissions of the new file; :data:`PUBLISHED_MODE` only for
+            the files the web server serves.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = data.encode() if isinstance(data, str) else data
@@ -142,7 +153,7 @@ def atomic_write(path: Path, data: bytes | str) -> None:
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(raw)
-        os.chmod(tmp, FILE_MODE)
+        os.chmod(tmp, mode)  # NOSONAR: other users may read only the published lists (PUBLISHED_MODE)
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):
@@ -178,7 +189,7 @@ def load_entry(country: str, doctype: str, list_id: str) -> dict[str, Any]:
         ListNotFound: No such list.
         CorruptList: The file cannot be parsed.
     """
-    path = list_dir(TOKEN_LIST, country, doctype, list_id) / "full_list.json"
+    path = list_dir(TOKEN_LIST, country, doctype, list_id) / FULL_LIST
     try:
         data = json.loads(path.read_text())
         data["token_status_list"] = IssuerStatusList.load(data["token_status_list"])
@@ -221,18 +232,18 @@ def save_entry(entry: dict[str, Any], *, publish: bool = True) -> None:
     token_dir = list_dir(TOKEN_LIST, country, doctype, list_id)
     identifier_dir = list_dir(IDENTIFIER_LIST, country, doctype, list_id)
     if not publish:
-        atomic_write(token_dir / "full_list.json", full_list)
-        atomic_write(identifier_dir / "full_list.json", full_list)
+        atomic_write(token_dir / FULL_LIST, full_list)
+        atomic_write(identifier_dir / FULL_LIST, full_list)
         return
     status_jwt = jwt_format(entry["token_status_list"], country, entry["status_list_uri"])
     status_cwt = cwt_format(entry["token_status_list"], country, entry["status_list_uri"])
     identifier_cwt = identifier_list_cwt_format(entry["identifier_list"], country, entry["identifier_list_uri"])
 
-    atomic_write(token_dir / "full_list.json", full_list)
-    atomic_write(token_dir / "token_status_list.jwt", status_jwt)
-    atomic_write(token_dir / "token_status_list.cwt", status_cwt)
-    atomic_write(identifier_dir / "full_list.json", full_list)
-    atomic_write(identifier_dir / "identifier_list.cwt", identifier_cwt)
+    atomic_write(token_dir / FULL_LIST, full_list)
+    atomic_write(token_dir / "token_status_list.jwt", status_jwt, PUBLISHED_MODE)
+    atomic_write(token_dir / "token_status_list.cwt", status_cwt, PUBLISHED_MODE)
+    atomic_write(identifier_dir / FULL_LIST, full_list)
+    atomic_write(identifier_dir / "identifier_list.cwt", identifier_cwt, PUBLISHED_MODE)
 
 
 def current_list_id(country: str, doctype: str) -> str | None:

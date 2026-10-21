@@ -18,7 +18,7 @@ services:
       - /etc/eudiw/age_verification/:/etc/eudiw/age_verification/:ro
       - /var/opt/status_lists_dev:/var/opt/status_lists_dev
       - /var/opt/status_list_backup_dev:/var/opt/status_list_backup_dev
-      - /tmp/status_lists_dev:/tmp/status_lists_dev
+      - /var/log/status_lists_dev:/var/log/status_lists_dev
     # The lists are kept on disk under a lock: more containers on the same
     # directories are safe.
     restart: unless-stopped

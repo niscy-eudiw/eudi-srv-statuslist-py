@@ -47,8 +47,8 @@ renewal:
   hours: [0, 12]
 
 logging:
-  # Log file, rotated at midnight (default /tmp/status_lists_dev/status_lists.log).
-  path: /tmp/status_lists_dev/status_lists.log
+  # Log file, rotated at midnight (default /var/log/status_lists_dev/status_lists.log).
+  path: /var/log/status_lists_dev/status_lists.log
   # DEBUG, INFO, WARNING or ERROR (default INFO).
   log_level: INFO
   # Rotated files kept (default 7).

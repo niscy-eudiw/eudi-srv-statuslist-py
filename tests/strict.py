@@ -15,6 +15,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
+from app.storage import FULL_LIST
+
 
 def strict_cbor(data: bytes):
     """Decodes exactly one CBOR item; trailing bytes are an error."""
@@ -50,8 +52,8 @@ def status_bit(compressed: bytes, idx: int) -> int:
 
 def check_list_files(token_dir: Path, identifier_dir: Path) -> dict:
     """Every file of one list is complete and valid; returns the JWT claims."""
-    json.loads((token_dir / "full_list.json").read_text())
-    json.loads((identifier_dir / "full_list.json").read_text())
+    json.loads((token_dir / FULL_LIST).read_text())
+    json.loads((identifier_dir / FULL_LIST).read_text())
     claims = verify_jwt((token_dir / "token_status_list.jwt").read_text())
     _, cwt_claims = verify_cwt((token_dir / "token_status_list.cwt").read_bytes())
     assert cwt_claims[65533]["lst"] == base64.urlsafe_b64decode(claims["status_list"]["lst"] + "==")

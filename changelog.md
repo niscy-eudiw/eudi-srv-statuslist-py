@@ -15,14 +15,14 @@ _21 Oct 2026_
 - `allowed_doctypes`: `wrprc` and `oauth-client-attestation+jwt` are allowed by default, next to `key-attestation+jwt`.
 - `debug` (default `false`): Flask debug mode. Before, it was always on.
 - `renewal.hours` (default `[0, 12]`): when the lists are re-signed; `status_list_ttl` (default 3600): the CWT time to live. Both were hard-coded.
-- `logging.path`, `logging.log_level` (default `INFO`) and `logging.backup_count` (default 7). Every log record has CR / LF escaped and traceback lines indented; the Flask and Werkzeug logs go to the same file.
+- `logging.path` (default `/var/log/status_lists_dev/status_lists.log`), `logging.log_level` (default `INFO`) and `logging.backup_count` (default 7). Every log record has CR / LF escaped and traceback lines indented; the Flask and Werkzeug logs go to the same file.
 
 ### Changed
 - `gitleaks.yml`, `dependencycheck.yml` and `sonar.yml` no longer call the `eu-digital-identity-wallet/eudi-infra-ci` reusable workflows (which needed `DOJO_TOKEN`, `DOJO_URL` and `NVD_API_KEY`); they run the scans themselves, as in the issuer backend. `sonar.yml` needs `SONAR_TOKEN`; the others need no secrets.
 - The gitleaks configuration moved from `security/gitleaks/gitleaks.toml` to `gitleaks/gitleaks.toml`.
 - `app/config_service.py` (`ConfService`) is gone: the service URL, directories, list size, countries and allowed doctypes come from the YAML configuration. The `API_key` environment variable / `.env` file is replaced by `api_key`, and `python-dotenv` is no longer used.
 - `countries.<CC>`: `private_key_path`, optional `private_key_password` and `certificate_path` (DER or PEM). Keys and certificates are loaded once at start-up, and a missing or unreadable one stops the service; before, they were read from disk for every list signed. In the example configuration `FC`, `EU` and `LU` lists are signed with the LU document signer.
-- Dependencies upgraded to current releases: Flask 3.1.3, Werkzeug 3.1.9, flask-cors 6.0.5, flask-swagger-ui 5.34.0, PyJWT 2.15.1, cbor2 6.1.5, cryptography 50.0.2 (now pinned; it came in through `cwt`), PyYAML 6.0.3. The unused `requests`, `flask_api` and `cwt` are removed. `pip-audit` reports no known vulnerabilities; before, it reported advisories for cryptography, PyJWT, Werkzeug, cbor2, flask-cors, requests and Flask.
+- Dependencies upgraded to current releases: Flask 3.1.3, Werkzeug 3.1.9, flask-swagger-ui 5.34.0, PyJWT 2.15.1, cbor2 6.1.5, cryptography 50.0.2 (now pinned; it came in through `cwt`), PyYAML 6.0.3. The unused `requests`, `flask_api` and `cwt` are removed, and so is `flask-cors` (see Security). `pip-audit` reports no known vulnerabilities; before, it reported advisories for cryptography, PyJWT, Werkzeug, cbor2, flask-cors, requests and Flask.
 - The `token-status-list` package (an unmaintained 0.1.0 alpha written for draft-02) is replaced by `app/status_list.py`, which keeps only the parts the service uses: the status bits and the random index allocator. `full_list.json` keeps its format, so existing lists load unchanged. The JWT and CWT take `bits` from the list instead of always writing 1.
 - `README.md` references [draft-ietf-oauth-status-list-12](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-12) instead of draft-02.
 - Debug `print()` calls (which printed every certificate and status list response) are log records now.
@@ -34,6 +34,9 @@ _21 Oct 2026_
 - `/token_status_list/take` logged the full request headers, `X-Api-Key` included. It now logs only the form payload, through `safe()`.
 - The service refuses to start when `api_key` is missing, shorter than 32 characters or a known placeholder (`test`, `secret`, ...). `X-Api-Key` is compared in constant time.
 - `/get` and `/set` joined the `uri` path to `status_list_dir` unchecked (`../` read other `full_list.json` files) and accepted any host. The `uri` must now be `<service_url>token_status_list|identifier_list/<CC>/<doctype>/<id>` with a configured country, an allowed doctype and a list id; otherwise 400.
+- CORS allowed every origin. Only the issuer calls the service (server to server), so `flask-cors` is removed and no CORS headers are sent.
+- The log file defaulted to `/tmp/status_lists_dev/`, under a world-writable directory; the default is now `/var/log/status_lists_dev/status_lists.log` (`Dockerfile`, `docker-compose.yml` and `install.md` follow). Set `logging.path` to keep the old location.
+- Every file the service wrote was world-readable (`0644`). Only the published `token_status_list.jwt`, `token_status_list.cwt` and `identifier_list.cwt` are now; `full_list.json`, `state/<CC>/<doctype>/current.json` and the backups are `0600`.
 - `/set` with `idx=-1` revoked the last entry of the list (another credential). Indices outside the list are rejected with 400 (before, 500 for those past the end).
 
 ### Fixed

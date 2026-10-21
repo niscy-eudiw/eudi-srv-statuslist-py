@@ -55,7 +55,7 @@ def _renew_one(country: str, doctype: str, list_id: str, timestamp: str, report:
         except ListNotFound:
             return  # removed meanwhile
         except CorruptList:
-            logger.error("Cannot renew %s: its full_list.json is unreadable", name, exc_info=True)
+            logger.exception("Cannot renew %s: its full_list.json is unreadable", name)
             report["corrupt"].append(name)
             return
         expires = entry.get("expires")

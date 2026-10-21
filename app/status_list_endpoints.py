@@ -132,7 +132,7 @@ def take_index():
         country = validate_country(request.form["country"])
         expiry_date = validate_expiry_date(request.form["expiry_date"])
     except ValueError as e:
-        logger.error(str(e))
+        logger.warning(str(e))
         return _error(str(e), 400)
 
     status_info = list_management.take(country, doctype, expiry_date)
@@ -186,7 +186,7 @@ def set_index():
         _, country, doctype, list_id = parse_list_uri(uri)
         list_management.revoke(country, doctype, list_id, index)
     except (BadRequest, IndexOutOfRange) as e:
-        logger.error(str(e))
+        logger.warning(str(e))
         return _error(str(e), 400)
     except ListNotFound:
         return _error("Unknown list", 404)
@@ -197,6 +197,6 @@ def set_index():
     return "Status Changed\n"
 
 
-@token.route("/static/swagger.json")
+@token.route("/static/swagger.json", methods=["GET"])
 def swagger_static():
     return send_from_directory("static", "swagger.json")

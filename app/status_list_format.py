@@ -108,7 +108,6 @@ def cwt_format(
         # 1: "issuer_example",
         2: list_url,
         6: int(time.time()),
-        # 4: int((datetime.now() + timedelta(days=1)).timestamp()),
         65534: CONFIGURATION["status_list_ttl"],
         65533: {"bits": token_status_list.status_list.bits, "lst": token_status_list.status_list.compressed()},
     }
@@ -120,11 +119,5 @@ def cwt_format(
 
     cose_sign1 = [cbor_header, unprotected, cbor_claims, signature]
     tagged = cbor2.CBORTag(18, cose_sign1)
-
-    """ try:
-        private_key.public_key().verify(signature, message, ec.ECDSA(hashes.SHA256()))
-        print("CWT signature is valid.")
-    except:
-        print("CWT signature is invalid.") """
 
     return cbor2.dumps(tagged)
