@@ -15,19 +15,32 @@
 # limitations under the License.
 #
 ###############################################################################
-import base64, cbor2, jwt
-from datetime import datetime, timedelta
+import base64
 import time
 
-from cryptography.hazmat.primitives.asymmetric import ec
+import cbor2
+import jwt
 from cryptography.hazmat.primitives import hashes
-from token_status_list import IssuerStatusList
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.backends import default_backend
-from cryptography import x509
-from app.config_service import ConfService as cfgservice
-
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
+from app.config import CONFIGURATION
+from app.status_list import IssuerStatusList
+
+
+def signer(country: str):
+    """Returns the signing key and DER certificate of a country.
+
+    Both are loaded once at start-up (``countries`` in the configuration).
+
+    Args:
+        country: Country code.
+
+    Returns:
+        ``(private_key, certificate_der)``.
+    """
+    entry = CONFIGURATION["countries"][country]
+    return entry["private_key"], entry["certificate"]
 
 
 def cose_es256_sign(private_key, cbor_header: bytes, cbor_claims: bytes) -> bytes:
@@ -50,31 +63,9 @@ def jwt_format(token_status_list: IssuerStatusList, country: str, list_url: str)
         str: The encoded JWT
     """
 
-    # private_key = ec.generate_private_key(ec.SECP256R1())
-
-    with open(cfgservice.countries[country]["privKey"], "rb") as key_file:
-        private_key = serialization.load_pem_private_key(
-            key_file.read(),
-            password=(
-                cfgservice.countries[country]["privkey_passwd"]
-                if cfgservice.countries[country]["privkey_passwd"] is not None
-                else None
-            ),
-            backend=default_backend(),
-        )
-
-    # print("\ntoken_status_list: ", token_status_list, flush=True)
-
-    with open(cfgservice.countries[country]["cert"], "rb") as file:
-        certificate = file.read()
-
-    cert = x509.load_der_x509_certificate(certificate)
-
-    _cert = cert.public_bytes(getattr(serialization.Encoding, "DER"))
+    private_key, _cert = signer(country)
 
     _cert_b64 = base64.b64encode(_cert).decode()
-
-    print("\ncert_b64", _cert_b64, flush=True)
 
     payload = {
         # "iss": "https://dev.issuer.eudiw.dev",
@@ -82,7 +73,7 @@ def jwt_format(token_status_list: IssuerStatusList, country: str, list_url: str)
         "iat": int(time.time()),
         # "exp": datetime.now() + timedelta(days=1),
         "status_list": {
-            "bits": 1,
+            "bits": token_status_list.status_list.bits,
             "lst": base64.urlsafe_b64encode(token_status_list.status_list.compressed())
             .decode("utf-8")
             .rstrip("="),
@@ -108,25 +99,7 @@ def cwt_format(
     Returns:
         str: The encoded CWT
     """
-    # private_key = ec.generate_private_key(ec.SECP256R1())
-
-    with open(cfgservice.countries[country]["privKey"], "rb") as key_file:
-        private_key = serialization.load_pem_private_key(
-            key_file.read(),
-            password=(
-                cfgservice.countries[country]["privkey_passwd"]
-                if cfgservice.countries[country]["privkey_passwd"] is not None
-                else None
-            ),
-            backend=default_backend(),
-        )
-
-    with open(cfgservice.countries[country]["cert"], "rb") as file:
-        certificate = file.read()
-
-    cert = x509.load_der_x509_certificate(certificate)
-
-    _cert = cert.public_bytes(getattr(serialization.Encoding, "DER"))
+    private_key, _cert = signer(country)
 
     unprotected = {4: b"1"}
     protected = {1: -7, 16: "application/statuslist+cwt", 33: _cert}
@@ -136,8 +109,8 @@ def cwt_format(
         2: list_url,
         6: int(time.time()),
         # 4: int((datetime.now() + timedelta(days=1)).timestamp()),
-        65534: 3600,
-        65533: {"bits": 1, "lst": token_status_list.status_list.compressed()},
+        65534: CONFIGURATION["status_list_ttl"],
+        65533: {"bits": token_status_list.status_list.bits, "lst": token_status_list.status_list.compressed()},
     }
 
     cbor_header = cbor2.dumps(protected)

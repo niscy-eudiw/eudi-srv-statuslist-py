@@ -15,294 +15,123 @@
 # limitations under the License.
 #
 ###############################################################################
-import copy
+"""Taking, revoking and reading list entries.
+
+Every operation works on the files of :mod:`app.storage`, under the lock of
+the list's country and doctype, so concurrent requests, several service
+processes and restarts all see the same lists.
+"""
+
+from __future__ import annotations
+
+import logging
 from datetime import datetime
-import json
-import os
-import sys
-from urllib.parse import urlparse
-from uuid import uuid4
+from typing import Any
 
-import cbor2
-from app.config_service import ConfService as cfgservice
+from app import storage
+from app.status_list import NoMoreIndices
+from app.storage import IDENTIFIER_LIST, TOKEN_LIST, CorruptList, ListNotFound
 
-# current_dir = os.path.dirname(os.path.abspath(__file__))
-# sys.path.append(os.path.join(current_dir, '..', 'token-status-list-py'))
-
-from token_status_list import IssuerStatusList, NoMoreIndices
-
-from app.status_list_format import cwt_format, jwt_format
-from app.identifier_list_format import (
-    identifier_list_cwt_format,
-    identifier_list_jwt_format,
-)
-
-status_list = {}
-
-identifier_list = {"identifiers": {}}
+logger = logging.getLogger(__name__)
 
 
-def new_list(country: str, doctype: str):
-    """
-    Initializes a new status list which inclues both the token status list and identifier status list, separated by country and doctype.
+class IndexOutOfRange(ValueError):
+    """An index outside the list."""
+
+
+def _later(a: str | None, b: str) -> str:
+    """The later of two ``YYYY-MM-DD`` dates (``a`` may be unset)."""
+    if a is None:
+        return b
+    return b if datetime.strptime(b, "%Y-%m-%d") > datetime.strptime(a, "%Y-%m-%d") else a
+
+
+def _current_entry(country: str, doctype: str) -> dict[str, Any]:
+    """The list new indices come from; a new one when there is none (call under the lock)."""
+    list_id = storage.current_list_id(country, doctype)
+    if list_id:
+        try:
+            return storage.load_entry(country, doctype, list_id)
+        except (ListNotFound, CorruptList):
+            logger.warning("Current list %s/%s/%s unusable, starting a new one", country, doctype, list_id, exc_info=True)
+    return storage.new_entry(country, doctype)
+
+
+def take(country: str, doctype: str, expiry_date: str) -> dict[str, Any]:
+    """Takes a free index for a credential about to be issued.
+
+    When the current list is full a new one is started; the index and the
+    URIs returned always belong to the same list.
 
     Args:
-        country (str): country code
-        doctype (str): doctype of the attestation
+        country: Country code.
+        doctype: Doctype (or vct) of the credential.
+        expiry_date: Expiry of the credential, ``YYYY-MM-DD``; the list is
+            kept at least until then.
+
+    Returns:
+        The ``status_list`` and ``identifier_list`` pointers for the issuer.
     """
-
-    status_list.update(
-        {
-            country: {
-                doctype: {
-                    "token_status_list": IssuerStatusList.new(
-                        1, cfgservice.token_status_list_size, "random"
-                    ),
-                    "identifier_list": identifier_list,
-                    "expires": None,
-                    "rand": str(uuid4()),
-                }
-            }
-        }
-    )
-
-def _stringify_keys(d):
+    with storage.country_doctype_lock(country, doctype):
+        entry = _current_entry(country, doctype)
+        try:
+            index = entry["token_status_list"].allocator.take()
+        except NoMoreIndices:
+            logger.info("List %s/%s/%s is full, starting a new one", country, doctype, entry["rand"])
+            entry = storage.new_entry(country, doctype)
+            index = entry["token_status_list"].allocator.take()
+        entry["expires"] = _later(entry["expires"], expiry_date)
+        # The statuses are unchanged: a new list is published, an existing one only stored.
+        storage.save_entry(entry, publish=_is_new(entry))
+        if storage.current_list_id(country, doctype) != entry["rand"]:
+            storage.set_current_list_id(country, doctype, entry["rand"])
     return {
-        (k.decode() if isinstance(k, bytes) else str(k)): v
-        for k, v in d.items()
+        "status_list": {"uri": entry["status_list_uri"], "idx": index},
+        "identifier_list": {"uri": entry["identifier_list_uri"], "id": str(index)},
     }
 
-def dump_list(specific_status_list, country, doctype):
+
+def _is_new(entry: dict[str, Any]) -> bool:
+    """Whether the list has no published files yet."""
+    token_dir = storage.list_dir(TOKEN_LIST, entry["country"], entry["doctype"], entry["rand"])
+    return not (token_dir / "token_status_list.jwt").exists()
+
+
+def _check_index(entry: dict[str, Any], index: int) -> None:
+    size = entry["token_status_list"].status_list.size
+    if not 0 <= index < size:
+        raise IndexOutOfRange(f"index must be between 0 and {size - 1}")
+
+
+def revoke(country: str, doctype: str, list_id: str, index: int) -> None:
+    """Revokes one entry: sets its status to 1 and adds it to the identifier list.
+
+    Raises:
+        ListNotFound: No such list.
+        CorruptList: The list cannot be read.
+        IndexOutOfRange: ``index`` is outside the list.
     """
-    Dumps the status lists to disk.
+    with storage.country_doctype_lock(country, doctype):
+        entry = storage.load_entry(country, doctype, list_id)
+        _check_index(entry, index)
+        entry["token_status_list"].status_list.set(index, 1)
+        entry["identifier_list"]["identifiers"][str(index)] = {}
+        storage.save_entry(entry)
+    logger.info("Revoked index %s of list %s/%s/%s", index, country, doctype, list_id)
 
-    Args:
-        specific_status_list (dict): status list to dump
-        country (str): country code
-        doctype (str): doctype of the attestation
+
+def read_status(kind: str, country: str, doctype: str, list_id: str, index: int) -> int:
+    """Status of one entry: the status list value, or 1 when the identifier list holds it.
+
+    Files are replaced atomically, so no lock is needed.
+
+    Raises:
+        ListNotFound, CorruptList, IndexOutOfRange: As for :func:`revoke`.
     """
-
-    rand = specific_status_list["rand"]
-    directory = (
-        f"{cfgservice.status_list_dir}/token_status_list/{country}/{doctype}/{rand}"
-    )
-    os.makedirs(directory, exist_ok=True)
-
-    json_file_path = os.path.join(directory, "full_list.json")
-
-    dict_copy = copy.deepcopy(specific_status_list)
-    dict_copy["token_status_list"] = dict_copy["token_status_list"].dump()
-    dict_copy["identifier_list"]["identifiers"] = _stringify_keys(
-            dict_copy["identifier_list"]["identifiers"]
-        )
-    dict_copy["country"] = country
-    dict_copy["doctype"] = doctype
-
-    with open(json_file_path, "w") as f:
-        f.write(json.dumps(dict_copy))
-
-    jwt_file_path = os.path.join(directory, "token_status_list.jwt")
-    with open(jwt_file_path, "w") as f:
-        f.write(
-            jwt_format(
-                specific_status_list["token_status_list"],
-                country,
-                cfgservice.service_url
-                + f"token_status_list/{country}/{doctype}/{rand}",
-            )
-        )
-
-    cwt_file_path = os.path.join(directory, "token_status_list.cwt")
-    with open(cwt_file_path, "wb") as f:
-        f.write(
-            cwt_format(
-                specific_status_list["token_status_list"],
-                country,
-                cfgservice.service_url
-                + f"token_status_list/{country}/{doctype}/{rand}",
-            )
-        )
-
-    specific_status_list.update(
-        {
-            "status_list_uri": cfgservice.service_url
-            + f"token_status_list/{country}/{doctype}/{rand}"
-        }
-    )
-    ##
-    identifier_list_directory = (
-        f"{cfgservice.status_list_dir}/identifier_list/{country}/{doctype}/{rand}"
-    )
-
-    os.makedirs(identifier_list_directory, exist_ok=True)
-
-    json_file_path = os.path.join(identifier_list_directory, "full_list.json")
-    with open(json_file_path, "w") as f:
-        f.write(json.dumps(dict_copy))
-
-    """ jwt_file_path = os.path.join(identifier_list_directory, "identifier_list.jwt")
-    with open(jwt_file_path, "w") as f:
-        f.write(
-            identifier_list_jwt_format(
-                specific_status_list["identifier_list"],
-                country,
-                cfgservice.service_url + f"identifier_list/{country}/{doctype}/{rand}",
-            )
-        ) """
-
-    cwt_file_path = os.path.join(identifier_list_directory, "identifier_list.cwt")
-    with open(cwt_file_path, "wb") as f:
-        f.write(
-            identifier_list_cwt_format(
-                specific_status_list["identifier_list"],
-                country,
-                cfgservice.service_url + f"identifier_list/{country}/{doctype}/{rand}",
-            )
-        )
-
-    specific_status_list.update(
-        {
-            "identifier_list_uri": cfgservice.service_url
-            + f"identifier_list/{country}/{doctype}/{rand}"
-        }
-    )
-
-
-def load_list(uri):
-    """
-    Loads a list from disk
-
-    Args:
-        uri (str): uri pointing to the status list to load
-
-    Returns:
-        dict: The loaded list
-    """
-
-    parsed_uri = urlparse(uri)
-    path = parsed_uri.path
-
-    folder_path = f"{cfgservice.status_list_dir}{path}/full_list.json"
-
-    with open(folder_path, "r") as json_file:
-        temp_list = json.load(json_file)
-
-    temp_list["token_status_list"] = IssuerStatusList.load(
-        temp_list["token_status_list"]
-    )
-
-    return temp_list
-
-
-def take_index_list(country, doctype, expiry_date):
-    """
-    Takes a new index/id from list
-
-    Args:
-        country (str): country code
-        doctype (str): doctype of the attestation
-        expiry_date (str): expiry date of the attestation
-
-    Returns:
-        str: The index/id
-    """
-
-    global status_list
-
-    if country not in status_list:
-        status_list.update({country: {}})
-
-    if doctype not in status_list[country]:
-        status_list[country].update(
-            {
-                doctype: {
-                    "token_status_list": IssuerStatusList.new(
-                        1, cfgservice.token_status_list_size, "random"
-                    ),
-                    "identifier_list": {"identifiers": {}},
-                    "expires": expiry_date,
-                    "rand": str(uuid4()),
-                }
-            }
-        )
-
-    try:
-        index = status_list[country][doctype]["token_status_list"].allocator.take()
-
-        if status_list[country][doctype]["expires"] is None:
-            status_list[country][doctype]["expires"] = expiry_date
-        else:
-            new_exp = datetime.strptime(expiry_date, "%Y-%m-%d")
-            current_exp = datetime.strptime(
-                status_list[country][doctype]["expires"], "%Y-%m-%d"
-            )
-            if new_exp > current_exp:
-                status_list[country][doctype]["expires"] = expiry_date
-
-        print(
-            "\nStatus List Expiry Changed to: ",
-            status_list[country][doctype]["expires"],
-            flush=True,
-        )
-
-
-        dump_list(status_list[country][doctype], country, doctype)
-    except NoMoreIndices as e:
-        dump_list(status_list[country][doctype], country, doctype)
-        status_list = {}
-        new_list(country, doctype)
-        index = status_list[country][doctype]["token_status_list"].allocator.take()
-        dump_list(status_list[country][doctype], country, doctype)
-
-    # status_list[doctype]["identifier_list"].update({str(index): {"status": 0}})
-    # print(status_list)
-    return index
-
-
-def generate_StatusListInfo(country, doctype, expiry_date):
-    """
-    Generates the structure sent to the issuer
-
-    Args:
-        country (str): country code
-        doctype (str): doctype of the attestation
-        expiry_date (str): expiry date of the attestation
-
-    Returns:
-        dict: structure to pass to the issuer
-    """
-
-    index = take_index_list(country, doctype, expiry_date)
-
-    status_list_uri = status_list[country][doctype]["status_list_uri"]
-    identifier_list_uri = status_list[country][doctype]["identifier_list_uri"]
-
-    StatusListInfo = {
-        "status_list": {
-            "uri": status_list_uri,
-            "idx": index,
-        },
-        "identifier_list": {
-            "uri": identifier_list_uri,
-            "id": str(index),
-        },
-    }
-
-    return StatusListInfo
-
-
-# in case where status list is still the same
-def update_status_list(country, doctype, id, index):
-    print("\nRevoking country: ", country)
-    print("\nRevoking doctype: ", doctype)
-    print("\nRevoking ID: ", id)
-
-    if (
-        country in status_list
-        and doctype in status_list[country]
-        and status_list[country][doctype]["rand"] == id
-    ):
-        status_list[country][doctype]["token_status_list"].status_list.set(index, 1)
-
-        if "identifier_list" in status_list[country][doctype]:
-            status_list[country][doctype]["identifier_list"]["identifiers"].update({str(index):{}})
+    entry = storage.load_entry(country, doctype, list_id)
+    _check_index(entry, index)
+    if kind == TOKEN_LIST:
+        return entry["token_status_list"].status_list.get(index)
+    if kind == IDENTIFIER_LIST:
+        return 1 if str(index) in entry["identifier_list"]["identifiers"] else 0
+    raise ValueError(f"unknown list kind {kind}")

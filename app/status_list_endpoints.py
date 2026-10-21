@@ -15,35 +15,54 @@
 # limitations under the License.
 #
 ###############################################################################
+import hmac
+import logging
+import re
 from datetime import datetime
-from urllib.parse import unquote, urlparse
-from flask import Blueprint, current_app, jsonify, request, send_from_directory
+from urllib.parse import unquote
 
-from app.list_management import (
-    dump_list,
-    generate_StatusListInfo,
-    load_list,
-    status_list,
-    new_list,
-    update_status_list,
-)
+from flask import Blueprint, jsonify, request, send_from_directory
+
+from app import list_management
+from app.config import CONFIGURATION
+from app.list_management import IndexOutOfRange
+from app.log_utils import safe
+from app.storage import LIST_KINDS, CorruptList, ListNotFound
 
 token = Blueprint("token_status_list", __name__, url_prefix="/token_status_list")
-from app.config_service import ConfService as cfgservice
+logger = logging.getLogger(__name__)
+
+_LIST_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+class BadRequest(ValueError):
+    """A request value the service rejects with 400."""
+
+
+def api_key_valid() -> bool:
+    """Tells whether the request carries the configured ``X-Api-Key``.
+
+    The comparison takes constant time.
+    """
+    sent = request.headers.get("X-Api-Key", "")
+    return hmac.compare_digest(sent.encode(), CONFIGURATION["api_key"].encode())
+
 
 def validate_doctype(user_input):
     """Validate doctype and return the allowed value"""
-    if user_input not in cfgservice.ALLOWED_DOCTYPES:
+    if user_input not in CONFIGURATION["allowed_doctypes"]:
         raise ValueError("Invalid document type")
-    
-    return next(dt for dt in cfgservice.ALLOWED_DOCTYPES if dt == user_input)
+
+    return next(dt for dt in CONFIGURATION["allowed_doctypes"] if dt == user_input)
+
 
 def validate_country(user_input):
     """Validate country code and return clean value"""
-    if user_input not in cfgservice.countries:
+    if user_input not in CONFIGURATION["countries"]:
         raise ValueError("Invalid country")
-    
-    return next(key for key in cfgservice.countries.keys() if key == user_input)
+
+    return next(key for key in CONFIGURATION["countries"].keys() if key == user_input)
+
 
 def validate_expiry_date(user_input):
     """Validate and sanitize expiry date"""
@@ -51,146 +70,129 @@ def validate_expiry_date(user_input):
         parsed_date = datetime.strptime(user_input, "%Y-%m-%d")
     except (ValueError, TypeError):
         raise ValueError("Invalid expiry date format. Use YYYY-MM-DD.")
-    
+
     if parsed_date.date() < datetime.now().date():
         raise ValueError("Expiry date must be in the future.")
-    
+
     # Return clean date string from parsed date
     return parsed_date.strftime("%Y-%m-%d")
+
+
+def parse_list_uri(uri) -> tuple[str, str, str, str]:
+    """Splits a list URI handed out by this service.
+
+    It must be ``<service_url><kind>/<CC>/<doctype>/<id>``: a configured
+    country, an allowed doctype and a list id, nothing else.
+
+    Returns:
+        ``(kind, country, doctype, list_id)``.
+
+    Raises:
+        BadRequest: Any other URI.
+    """
+    prefix = CONFIGURATION["service_url"]
+    if not isinstance(uri, str) or not uri.startswith(prefix) or "?" in uri or "#" in uri:
+        raise BadRequest("uri is not a list of this service")
+    parts = [unquote(part) for part in uri[len(prefix):].split("/")]
+    if len(parts) != 4 or parts[0] not in LIST_KINDS or not _LIST_ID.match(parts[3]):
+        raise BadRequest("uri is not a list of this service")
+    kind, country, doctype, list_id = parts
+    try:
+        return kind, validate_country(country), validate_doctype(doctype), list_id
+    except ValueError as e:
+        raise BadRequest(str(e)) from e
+
+
+def parse_index(value) -> int:
+    """A non-negative integer index (the upper bound is checked against the list)."""
+    try:
+        index = int(value)
+    except (TypeError, ValueError):
+        raise BadRequest("'id' or 'idx' unkown") from None
+    if index < 0:
+        raise BadRequest("index must not be negative")
+    return index
+
+
+def _error(message: str, status: int):
+    return jsonify({"error": message}), status
+
 
 @token.route("/take", methods=["POST"])
 def take_index():
 
-    cfgservice.app_logger.info("Take Request, header:\n" + str(request.headers) + ", payload:\n" + str(request.form.to_dict()))
+    logger.info("Take request, payload: %s", safe(request.form.to_dict()))
 
-    api_key = request.headers.get("X-Api-Key")
-
-    if api_key != current_app.config['API_key']:
-        cfgservice.app_logger.error("Incorrect API key")
+    if not api_key_valid():
+        logger.error("Incorrect API key")
         return jsonify({"error": "Incorrect API key"}), 401
 
     try:
         doctype = validate_doctype(request.form["doctype"])
-    except ValueError as e:
-        cfgservice.app_logger.error(str(e))
-        return jsonify({"error": str(e)}), 400
-
-    try:
         country = validate_country(request.form["country"])
-    except ValueError as e:
-        cfgservice.app_logger.error(str(e))
-        return jsonify({"error": str(e)}), 400
-
-    try:
         expiry_date = validate_expiry_date(request.form["expiry_date"])
     except ValueError as e:
-        cfgservice.app_logger.error(str(e))
-        return jsonify({"error": str(e)}), 400
-        
-    if country not in status_list:
-        new_list(country,doctype)
-    #if doctype not in status_list:
-    #    new_list(doctype)
-    status_info = generate_StatusListInfo(country,doctype,expiry_date)
-    
-    print("\nStatus Info: ", status_info, flush=True)
+        logger.error(str(e))
+        return _error(str(e), 400)
 
+    status_info = list_management.take(country, doctype, expiry_date)
+    logger.debug("Status info: %s", status_info)
     return jsonify(status_info)
 
 
 @token.route("/get", methods=["GET"])
 def get_index():
 
-    print("\nargs: ", request.args, flush=True)
-
-    """ api_key = request.headers.get("X-Api-Key")
-    if api_key != current_app.config['API_key']:
-        return jsonify({"message": "Unauthorized access"}), 401 """
-
+    logger.debug("Get request, args: %s", safe(request.args.to_dict()))
 
     uri = request.args.get("uri")
-    
     index = request.args.get("id") or request.args.get("idx")
-
     if uri is None or index is None:
-        return jsonify({"error": "Missing URI or idx/id"}), 400
-    
+        return _error("Missing URI or idx/id", 400)
+
     try:
-        index = int(index)
-    except ValueError:
-        return jsonify({"error": "'id' or 'idx' unkown"}), 400
-
-    uri = unquote(uri)
-    temp_list = load_list(uri)
-
-    if "token_status_list" in uri:
-        return str(temp_list["token_status_list"].status_list.get(index))
-    elif "identifier_list" in uri:
-        if str(index) not in temp_list["identifier_list"]:
-            return str(0)
-        else:
-            return str(temp_list["identifier_list"][str(index)])
-    else:
-        return jsonify({"error": "Missing URI or index"}), 400
+        index = parse_index(index)
+        kind, country, doctype, list_id = parse_list_uri(uri)
+        return str(list_management.read_status(kind, country, doctype, list_id, index))
+    except (BadRequest, IndexOutOfRange) as e:
+        return _error(str(e), 400)
+    except ListNotFound:
+        return _error("Unknown list", 404)
+    except CorruptList:
+        logger.exception("Unreadable list %s", safe(uri))
+        return _error("List unavailable", 500)
 
 
 @token.route("/set", methods=["POST"])
 def set_index():
-    api_key = request.headers.get("X-Api-Key")
-    if api_key != current_app.config['API_key']:
+    if not api_key_valid():
         return jsonify({"message": "Unauthorized access"}), 401
 
-    uri = request.form["uri"]
-
+    uri = request.form.get("uri")
     index = request.form.get("id") or request.form.get("idx")
-    
-    status = request.form["status"]
-
+    status = request.form.get("status")
     if uri is None or index is None or status is None:
-        return jsonify({"error": "Missing URI/index/status"}), 400
-
-    
-    try:
-        index = int(index)
-    except ValueError as e:
-        cfgservice.app_logger.error(str(e))
-        return jsonify({"error": "'id' or 'idx' unkown"}), 400
+        return _error("Missing URI/index/status", 400)
 
     try:
-        status = int(status)
-    except ValueError as e:
-        cfgservice.app_logger.error(str(e))
-        return jsonify({"error": " status unkown"}), 400
-
-    if status != 1:
-        return jsonify({"error": "Wrong Status Change"}), 400
-
-    temp_list = load_list(uri)
-    
-    temp_list["token_status_list"].status_list.set(index, status)
-
-    temp_list["identifier_list"]["identifiers"].update({str(index):{}})
-
-    parsed_url = urlparse(uri)
-    path_parts = parsed_url.path.split("/")
-
-    try:
-        doctype = validate_doctype(path_parts[3])
-    except ValueError as e:
-        cfgservice.app_logger.error(str(e))
-        return jsonify({"error": str(e)}), 400
-
-    try:
-        country = validate_country(path_parts[2])
-    except ValueError as e:
-        cfgservice.app_logger.error(str(e))
-        return jsonify({"error": str(e)}), 400
-    
-    id = path_parts[4]
-
-    update_status_list(country,doctype,id, index)
-
-    dump_list(temp_list, country, doctype)
+        index = parse_index(index)
+        try:
+            status = int(status)
+        except ValueError:
+            return _error(" status unkown", 400)
+        if status != 1:
+            return _error("Wrong Status Change", 400)
+        # Either URI of a list (token or identifier list) revokes the same entry.
+        _, country, doctype, list_id = parse_list_uri(uri)
+        list_management.revoke(country, doctype, list_id, index)
+    except (BadRequest, IndexOutOfRange) as e:
+        logger.error(str(e))
+        return _error(str(e), 400)
+    except ListNotFound:
+        return _error("Unknown list", 404)
+    except CorruptList:
+        logger.exception("Unreadable list %s", safe(uri))
+        return _error("List unavailable", 500)
 
     return "Status Changed\n"
 

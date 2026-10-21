@@ -9,6 +9,5 @@
 | Werkzeug                  | 2.3.7     | BSD 3-Clause License                                         | https://github.com/pallets/werkzeug/                           | https://github.com/pallets/werkzeug/blob/main/LICENSE.txt|
 | cwt                       | 2.3.2     | MIT License                                         | https://github.com/dajiaji/python-cwt/                          | https://github.com/dajiaji/python-cwt/blob/main/LICENSE|
 | PyJWT                     | 2.8.0     | MIT License                                         | https://github.com/jpadilla/pyjwt/                              | https://github.com/jpadilla/pyjwt/blob/master/LICENSE|
-| token-status-list-py                  | 0.1.0a2.dev0     | Apache Software License 2.0       | https://github.com/Indicio-tech/token-status-list-py                           | https://github.com/Indicio-tech/token-status-list-py/blob/main/LICENSE|
 | python-dotenv                  | 1.0.1     | BSD 3-Clause License       | https://github.com/theskumar/python-dotenv                           | https://github.com/theskumar/python-dotenv/blob/main/LICENSE|
 | flask-swagger-ui   | 4.11.1     | MIT License       | https://github.com/sveint/flask-swagger-ui                           | https://github.com/sveint/flask-swagger-ui/blob/master/LICENSE|
