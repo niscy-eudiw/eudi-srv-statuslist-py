@@ -35,7 +35,7 @@ _LIST_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 
 #: A non-negative decimal number as written by the issuer: ASCII digits, no
 #: sign, spaces or leading zeros.
-_NUMBER = re.compile(r"0|[1-9][0-9]*")
+_NUMBER = re.compile(r"0|[1-9]\d*", re.ASCII)
 
 
 #: Longest identifier list ``id`` accepted (the service hands out 32 characters).
@@ -67,7 +67,7 @@ def api_key_valid() -> bool:
 
 def _unauthorized():
     """Logs a failed ``X-Api-Key`` check and answers 401."""
-    logger.warning("%s: %s %s", UNAUTHORIZED, request.method, request.path)
+    logger.warning("%s: %s %s", UNAUTHORIZED, safe(request.method), safe(request.path))
     return jsonify({"message": UNAUTHORIZED}), 401
 
 
